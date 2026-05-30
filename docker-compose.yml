@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: travelshield-db
+    environment:
+      POSTGRES_USER: travelshield
+      POSTGRES_PASSWORD: travelshield_secret
+      POSTGRES_DB: travelshield
+    ports:
+      - '5433:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U travelshield']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    container_name: travelshield-api
+    ports:
+      - '5000:5000'
+    environment:
+      DATABASE_URL: postgresql://travelshield:travelshield_secret@postgres:5432/travelshield?schema=public
+      NODE_ENV: production
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-change-me-access}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change-me-refresh}
+      CORS_ORIGIN: http://localhost:5173,http://localhost:80
+      FRONTEND_URL: http://localhost:5173
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - uploads:/app/uploads
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: /api
+    container_name: travelshield-web
+    ports:
+      - '80:80'
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  uploads:

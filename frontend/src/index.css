@@ -1,0 +1,67 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply box-border;
+    margin: 0;
+    padding: 0;
+  }
+
+  html {
+    background-color: #050b1f;
+    min-height: 100%;
+    width: 100%;
+  }
+
+  body {
+    background-color: #050b1f;
+    color: white;
+    font-family: 'Inter', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    min-height: 100vh;
+    min-height: 100dvh;
+    width: 100%;
+    overflow-x: hidden;
+  }
+
+  #root {
+    background-color: #050b1f;
+    min-height: 100vh;
+    min-height: 100dvh;
+    width: 100%;
+    position: relative;
+    isolation: isolate;
+  }
+}
+
+@layer components {
+  .glass-card {
+    @apply backdrop-blur-md bg-[rgba(10,19,48,0.4)] border border-white/10 rounded-2xl shadow-[0px_8px_16px_rgba(0,0,0,0.3)];
+  }
+  .glass-input {
+    @apply bg-[rgba(5,11,31,0.5)] border border-white/10 rounded-xl text-white placeholder:text-gray-400 focus:outline-none focus:border-cyan/50 focus:ring-1 focus:ring-cyan/30 transition-all;
+  }
+  .btn-primary {
+    @apply bg-cyan-button text-navy font-medium rounded-xl shadow-glow-btn hover:brightness-110 transition-all active:scale-[0.98];
+  }
+  .btn-secondary {
+    @apply backdrop-blur-sm bg-white/10 border border-white/20 text-white font-medium rounded-xl hover:bg-white/15 transition-all;
+  }
+  .glow-orb-cyan {
+    @apply absolute rounded-full bg-[rgba(0,184,212,0.2)] blur-[50px] pointer-events-none;
+  }
+  .glow-orb-blue {
+    @apply absolute rounded-full bg-[rgba(37,99,235,0.2)] blur-[60px] pointer-events-none;
+  }
+  .glow-orb-indigo {
+    @apply absolute rounded-full bg-[rgba(26,42,108,0.3)] blur-[50px] pointer-events-none;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(0,229,255,0.3); border-radius: 4px; }

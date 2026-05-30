@@ -1,0 +1,325 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum AlertType {
+  CROWD
+  WEATHER
+  SAFE_ZONE
+  EMERGENCY
+  SYSTEM
+}
+
+enum AlertSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum EmergencyStatus {
+  PENDING
+  ACTIVE
+  RESOLVED
+  CANCELLED
+}
+
+enum TravelEventType {
+  SAFE_ZONE_ENTER
+  ROUTE_REROUTE
+  CHECK_IN
+  CHECK_OUT
+  ALERT
+  SOS
+}
+
+model User {
+  id                String    @id @default(uuid())
+  email             String    @unique
+  passwordHash      String
+  firstName         String
+  lastName          String
+  role              Role      @default(USER)
+  isEmailVerified   Boolean   @default(false)
+  isActive          Boolean   @default(true)
+  avatarUrl         String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  lastLoginAt       DateTime?
+
+  profile           UserProfile?
+  refreshTokens     RefreshToken[]
+  passwordResets    PasswordResetToken[]
+  emailVerifications EmailVerificationToken[]
+  alerts            Alert[]
+  emergencyEvents   EmergencyEvent[]
+  travelHistory     TravelHistory[]
+  emergencyContacts EmergencyContact[]
+  chatMessages      ChatMessage[]
+  safetyScores      SafetyScore[]
+  activityLogs      ActivityLog[]
+  preferences       UserPreferences?
+
+  @@index([email])
+  @@index([role])
+}
+
+model UserProfile {
+  id              String   @id @default(uuid())
+  userId          String   @unique
+  touristId       String   @unique
+  nationality     String   @default("USA")
+  validUntil      DateTime
+  blockchainHash  String?
+  biometricEnabled Boolean @default(false)
+  currentLat      Float?
+  currentLng      Float?
+  currentLocation String?
+  geoFenceActive  Boolean  @default(false)
+  geoFenceName    String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([touristId])
+}
+
+model UserPreferences {
+  id                  String  @id @default(uuid())
+  userId              String  @unique
+  pushNotifications   Boolean @default(true)
+  emailNotifications  Boolean @default(true)
+  smsAlerts           Boolean @default(false)
+  darkMode            Boolean @default(true)
+  language            String  @default("en")
+  shareLocation       Boolean @default(true)
+  autoSosEnabled      Boolean @default(false)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  revoked   Boolean  @default(false)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([userId])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+}
+
+model EmailVerificationToken {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+}
+
+model SafeZone {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  latitude    Float
+  longitude   Float
+  radiusM     Float    @default(500)
+  safetyScore Int      @default(85)
+  isActive    Boolean  @default(true)
+  sector      String?
+  city        String   @default("Singapore")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([latitude, longitude])
+  @@index([city])
+}
+
+model PointOfInterest {
+  id          String   @id @default(uuid())
+  name        String
+  type        String
+  latitude    Float
+  longitude   Float
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  @@index([type])
+  @@index([latitude, longitude])
+}
+
+model Place {
+  id           String   @id @default(uuid())
+  name         String
+  category     String
+  latitude     Float
+  longitude    Float
+  rating       Float    @default(4.5)
+  safetyScore  Int      @default(90)
+  distanceKm   Float?
+  imageUrl     String?
+  badge        String?
+  description  String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  @@index([category])
+  @@index([safetyScore])
+}
+
+model Alert {
+  id        String        @id @default(uuid())
+  userId    String?
+  title     String
+  message   String
+  type      AlertType
+  severity  AlertSeverity @default(MEDIUM)
+  location  String?
+  latitude  Float?
+  longitude Float?
+  isRead    Boolean       @default(false)
+  isGlobal  Boolean       @default(false)
+  createdAt DateTime      @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([type])
+  @@index([createdAt])
+}
+
+model EmergencyEvent {
+  id          String          @id @default(uuid())
+  userId      String
+  status      EmergencyStatus @default(PENDING)
+  type        String          @default("SOS")
+  latitude    Float?
+  longitude   Float?
+  location    String?
+  notes       String?
+  resolvedAt  DateTime?
+  createdAt   DateTime        @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model EmergencyContact {
+  id           String   @id @default(uuid())
+  userId       String
+  name         String
+  relationship String
+  phone        String
+  email        String?
+  isPrimary    Boolean  @default(false)
+  autoAlert    Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model TravelHistory {
+  id        String          @id @default(uuid())
+  userId    String
+  eventType TravelEventType
+  title     String
+  location  String
+  latitude  Float?
+  longitude Float?
+  metadata  Json?
+  createdAt DateTime        @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([createdAt])
+  @@index([eventType])
+}
+
+model SafetyScore {
+  id              String   @id @default(uuid())
+  userId          String
+  overallScore    Int
+  areaSafety      String
+  aiConfidence    Float
+  crowdDensity    String
+  crimeRate       String
+  weatherConditions String
+  latitude        Float?
+  longitude       Float?
+  createdAt       DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model ChatMessage {
+  id        String   @id @default(uuid())
+  userId    String
+  role      String
+  content   String
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model ActivityLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  action    String
+  resource  String?
+  details   Json?
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+}
