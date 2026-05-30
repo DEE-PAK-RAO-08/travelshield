@@ -29,9 +29,7 @@
     "nodemailer": "^6.9.16",
     "uuid": "^11.0.5",
     "winston": "^3.17.0",
-    "xss": "^1.0.15"
-  },
-  "devDependencies": {
+    "xss": "^1.0.15",
     "@types/bcryptjs": "^2.4.6",
     "@types/cookie-parser": "^1.4.8",
     "@types/cors": "^2.8.17",
@@ -46,6 +44,7 @@
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
   },
+  "devDependencies": {},
   "prisma": {
     "seed": "tsx prisma/seed.ts"
   }
