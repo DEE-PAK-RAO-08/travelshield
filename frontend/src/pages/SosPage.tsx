@@ -162,11 +162,6 @@ export default function SosPage() {
           {triggered && (
             <div className="flex flex-col items-center gap-3 mt-6">
               <p className="text-safe text-sm text-center font-medium px-4">Emergency alert sent to authorities.<br/>Live tracking is now active.</p>
-              
-              <button onClick={sendWhatsAppSOS} className="w-full flex items-center justify-center gap-2 mt-2 px-4 py-3 rounded-xl bg-green-500/20 border border-green-500 text-green-500 font-bold hover:bg-green-500/30 transition-all">
-                <MessageCircle className="w-5 h-5" /> Share live tracking to WhatsApp
-              </button>
-
               <button 
                 onClick={() => {
                   setTriggered(false);
