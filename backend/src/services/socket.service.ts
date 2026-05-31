@@ -1,31 +1,18 @@
 import { Server as HttpServer } from 'http';
 import { Server, Socket } from 'socket.io';
-import { createAdapter } from '@socket.io/redis-adapter';
-import { createClient } from 'redis';
 import { config } from '../config';
 import logger from '../utils/logger';
 import jwt from 'jsonwebtoken';
 
 let io: Server;
 
-export const initializeSocket = async (httpServer: HttpServer) => {
+export const initializeSocket = (httpServer: HttpServer) => {
   io = new Server(httpServer, {
     cors: {
       origin: config.cors.origin,
       credentials: true,
     },
   });
-
-  const pubClient = createClient({ url: config.redisUrl || 'redis://localhost:6379' });
-  const subClient = pubClient.duplicate();
-
-  try {
-    await Promise.all([pubClient.connect(), subClient.connect()]);
-    io.adapter(createAdapter(pubClient, subClient));
-    logger.info('Socket.IO Redis adapter connected');
-  } catch (error) {
-    logger.error('Redis connection failed, Socket.IO running without adapter', error);
-  }
 
   // Middleware for Authentication
   io.use((socket, next) => {
@@ -63,7 +50,7 @@ export const initializeSocket = async (httpServer: HttpServer) => {
 
     // Real-time location update broadcast
     socket.on('location_update', (data: { trackingSessionId: string; lat: number; lng: number; timestamp: string }) => {
-      // Broadcast to everyone else in this tracking session (like emergency contacts viewing the map)
+      // Broadcast to everyone else in this tracking session
       socket.to(`tracking_${data.trackingSessionId}`).emit('live_location', data);
     });
 
@@ -71,6 +58,8 @@ export const initializeSocket = async (httpServer: HttpServer) => {
       logger.info(`User disconnected: ${userId}`);
     });
   });
+
+  logger.info('Socket.IO initialized (in-memory mode)');
 };
 
 export const getIO = () => {
