@@ -62,6 +62,29 @@ export default function SettingsPage() {
   };
 
   const [geminiKey, setGeminiKey] = useState(localStorage.getItem('travelshield_gemini_api_key') || '');
+  const [keyTestStatus, setKeyTestStatus] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle');
+
+  const testGeminiKey = async (key: string) => {
+    if (!key.trim()) return;
+    setKeyTestStatus('testing');
+    try {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key.trim()}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'Say OK' }] }] }),
+        }
+      );
+      if (res.ok) {
+        setKeyTestStatus('ok');
+      } else {
+        setKeyTestStatus('fail');
+      }
+    } catch {
+      setKeyTestStatus('fail');
+    }
+  };
 
   const settings = [
     { key: 'pushNotifications', label: 'Push Notifications', desc: 'Receive safety alerts on device' },
@@ -96,24 +119,29 @@ export default function SettingsPage() {
         <div className="glass-card p-4 space-y-3 animate-fadeSlideUp" style={{ animationDelay: '0.1s' }}>
           <div>
             <p className="text-white text-sm font-semibold">Google Gemini API Key</p>
-            <p className="text-white/40 text-xs mt-0.5">Powers your chatbot with real AI answers. Get a free key at <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="text-cyan underline">Google AI Studio</a>.</p>
+            <p className="text-white/40 text-xs mt-0.5">Powers Travel AI with real answers. Get a <b>free</b> key (starts with <code className="text-cyan">AIzaSy...</code>) at{' '}
+              <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="text-cyan underline">aistudio.google.com</a>.
+            </p>
           </div>
           <div className="flex gap-2">
             <input
-              type="password"
+              type="text"
               value={geminiKey}
               onChange={(e) => {
                 setGeminiKey(e.target.value);
                 localStorage.setItem('travelshield_gemini_api_key', e.target.value);
+                setKeyTestStatus('idle');
               }}
-              placeholder="Paste AIzaSy... key"
+              placeholder="Paste AIzaSy... key here"
               className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-cyan/50"
+              style={{ fontFamily: 'monospace' }}
             />
             {geminiKey && (
               <button
                 onClick={() => {
                   setGeminiKey('');
                   localStorage.removeItem('travelshield_gemini_api_key');
+                  setKeyTestStatus('idle');
                 }}
                 className="px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded-xl text-xs font-semibold transition-colors"
               >
@@ -121,6 +149,28 @@ export default function SettingsPage() {
               </button>
             )}
           </div>
+          {/* Test Key Button */}
+          {geminiKey && (
+            <button
+              onClick={() => testGeminiKey(geminiKey)}
+              disabled={keyTestStatus === 'testing'}
+              className="w-full py-2 rounded-xl text-xs font-bold transition-all border"
+              style={{
+                background: keyTestStatus === 'ok' ? 'rgba(52,211,153,0.12)' :
+                            keyTestStatus === 'fail' ? 'rgba(239,68,68,0.12)' : 'rgba(255,255,255,0.05)',
+                borderColor: keyTestStatus === 'ok' ? 'rgba(52,211,153,0.4)' :
+                             keyTestStatus === 'fail' ? 'rgba(239,68,68,0.4)' : 'rgba(255,255,255,0.1)',
+                color: keyTestStatus === 'ok' ? '#34d399' :
+                       keyTestStatus === 'fail' ? '#f87171' : 'rgba(255,255,255,0.6)',
+                cursor: keyTestStatus === 'testing' ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {keyTestStatus === 'testing' && '⏳ Testing key...'}
+              {keyTestStatus === 'ok' && '✅ Key is valid! AI is ready.'}
+              {keyTestStatus === 'fail' && '❌ Key invalid or expired. Get a new key.'}
+              {keyTestStatus === 'idle' && '🔑 Test Key Now'}
+            </button>
+          )}
         </div>
       </div>
 

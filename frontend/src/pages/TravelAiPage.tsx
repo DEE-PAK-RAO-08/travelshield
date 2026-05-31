@@ -1,9 +1,8 @@
 import { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Bot, Send, Utensils, Landmark, ShieldQuestion,
-  Sparkles, Shield, Zap, Globe, RefreshCw, Mic, Map, Waves, Users } from 'lucide-react';
+  Sparkles, Shield, Zap, Globe, RefreshCw, Mic, Map, Waves, Users, MapPin, AlertCircle } from 'lucide-react';
 import { BottomNav } from '@/components/layout/BottomNav';
-import { dashboardApi } from '@/api/client';
 
 interface Message {
   role: string;
@@ -83,22 +82,78 @@ function MessageBubble({ msg, index }: { msg: Message; index: number }) {
   );
 }
 
+// ── Try Gemini API with multiple models/endpoints ────────────────────────────
+async function callGemini(key: string, contents: object[], maxTokens = 400): Promise<string> {
+  const models = [
+    'gemini-1.5-flash',
+    'gemini-2.0-flash',
+    'gemini-pro',
+    'gemini-1.0-pro',
+  ];
+
+  let lastError = '';
+
+  for (const model of models) {
+    try {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents,
+            generationConfig: { maxOutputTokens: maxTokens, temperature: 0.75, topP: 0.95 },
+          }),
+        }
+      );
+
+      if (!res.ok) {
+        const errBody = await res.text();
+        lastError = `${model}: HTTP ${res.status} — ${errBody.slice(0, 200)}`;
+        continue; // try next model
+      }
+
+      const json = await res.json() as {
+        candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+        error?: { message?: string };
+      };
+
+      if (json.error) {
+        lastError = `${model}: ${json.error.message || 'API Error'}`;
+        continue;
+      }
+
+      const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text) {
+        lastError = `${model}: Empty response`;
+        continue;
+      }
+
+      return text.trim(); // SUCCESS
+    } catch (e) {
+      lastError = `${model}: ${String(e)}`;
+    }
+  }
+
+  throw new Error(`All Gemini models failed. Last error: ${lastError}`);
+}
+
 export default function TravelAiPage() {
   const navigate = useNavigate();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [loadingHistory, setLoadingHistory] = useState(true);
   const [error, setError] = useState('');
-  const [hasGeminiKey, setHasGeminiKey] = useState(
-    !!(localStorage.getItem('travelshield_gemini_api_key') || import.meta.env.VITE_GEMINI_API_KEY)
-  );
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Geolocation and OSM local context state
-  const [userCoords, setUserCoords] = useState<{ lat: number; lng: number } | null>(null);
+  // Gemini key (from env or localStorage settings override)
+  const GEMINI_KEY = localStorage.getItem('travelshield_gemini_api_key') || import.meta.env.VITE_GEMINI_API_KEY || '';
+  const hasKey = !!GEMINI_KEY;
+
+  // Location context from OSM
   const [locationContext, setLocationContext] = useState<string>('');
+  const [locationLabel, setLocationLabel] = useState<string>('');
 
   useEffect(() => {
     if (!('geolocation' in navigator)) return;
@@ -106,138 +161,66 @@ export default function TravelAiPage() {
       async (pos) => {
         const lat = pos.coords.latitude;
         const lng = pos.coords.longitude;
-        setUserCoords({ lat, lng });
 
         try {
-          // 1. Fetch Area/Neighborhood Name
-          const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=14`, {
-            headers: { 'User-Agent': 'TravelShield-AI-App' }
-          });
+          const geoRes = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=14`,
+            { headers: { 'User-Agent': 'TravelShield-AI-App' } }
+          );
           let areaStr = '';
           if (geoRes.ok) {
             const geoData = await geoRes.json() as any;
             areaStr = geoData.address?.suburb || geoData.address?.neighbourhood || geoData.address?.city || geoData.display_name?.split(',')[0] || '';
           }
 
-          // 2. Fetch Nearby Police Stations
-          const policeRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=police&lat=${lat}&lon=${lng}&limit=3`, {
-            headers: { 'User-Agent': 'TravelShield-AI-App' }
-          });
+          const [policeRes, hospitalRes] = await Promise.allSettled([
+            fetch(`https://nominatim.openstreetmap.org/search?format=json&q=police+station&lat=${lat}&lon=${lng}&limit=3`, { headers: { 'User-Agent': 'TravelShield-AI-App' } }),
+            fetch(`https://nominatim.openstreetmap.org/search?format=json&q=hospital&lat=${lat}&lon=${lng}&limit=3`, { headers: { 'User-Agent': 'TravelShield-AI-App' } }),
+          ]);
+
           let policeList: string[] = [];
-          if (policeRes.ok) {
-            const policeData = await policeRes.json() as any[];
-            policeList = policeData.slice(0, 3).map((p, idx) => 
-              `${idx + 1}. ${p.name || p.display_name?.split(',')[0]} (coordinates: ${p.lat}, ${p.lon})`
+          if (policeRes.status === 'fulfilled' && policeRes.value.ok) {
+            const data = await policeRes.value.json() as any[];
+            policeList = data.slice(0, 3).map((p, i) =>
+              `${i + 1}. ${p.name || p.display_name?.split(',')[0] || 'Police Station'} (lat: ${p.lat}, lng: ${p.lon})`
             );
           }
 
-          // 3. Fetch Nearby Hospitals
-          const hospitalRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=hospital&lat=${lat}&lon=${lng}&limit=3`, {
-            headers: { 'User-Agent': 'TravelShield-AI-App' }
-          });
           let hospitalList: string[] = [];
-          if (hospitalRes.ok) {
-            const hospitalData = await hospitalRes.json() as any[];
-            hospitalList = hospitalData.slice(0, 3).map((h, idx) => 
-              `${idx + 1}. ${h.name || h.display_name?.split(',')[0]} (coordinates: ${h.lat}, ${h.lon})`
+          if (hospitalRes.status === 'fulfilled' && hospitalRes.value.ok) {
+            const data = await hospitalRes.value.json() as any[];
+            hospitalList = data.slice(0, 3).map((h, i) =>
+              `${i + 1}. ${h.name || h.display_name?.split(',')[0] || 'Hospital'} (lat: ${h.lat}, lng: ${h.lon})`
             );
           }
 
-          let context = `User current location coordinates: latitude ${lat.toFixed(5)}, longitude ${lng.toFixed(5)}.\n`;
-          if (areaStr) context += `Neighborhood/Area: ${areaStr}.\n`;
-          if (policeList.length > 0) {
-            context += `Nearby Police Stations:\n${policeList.join('\n')}\n`;
-          } else {
-            context += `Nearby Police: Standard local emergency line (112/999/911).\n`;
-          }
-          if (hospitalList.length > 0) {
-            context += `Nearby Hospitals:\n${hospitalList.join('\n')}\n`;
-          }
+          let ctx = `User GPS: lat ${lat.toFixed(5)}, lng ${lng.toFixed(5)}.\n`;
+          if (areaStr) ctx += `Neighborhood: ${areaStr}.\n`;
+          if (policeList.length) ctx += `Real nearby police stations:\n${policeList.join('\n')}\n`;
+          if (hospitalList.length) ctx += `Real nearby hospitals:\n${hospitalList.join('\n')}\n`;
 
-          setLocationContext(context);
-          console.log("OSM Geolocation Intelligence context loaded:\n", context);
-        } catch (err) {
-          console.warn('Nominatim loading failed:', err);
+          setLocationContext(ctx);
+          setLocationLabel(areaStr || `${lat.toFixed(4)}, ${lng.toFixed(4)}`);
+        } catch {
+          // location context not critical
         }
       },
-      (err) => console.warn('Geolocation permission not granted for AI:', err),
+      () => {},
       { enableHighAccuracy: true, timeout: 8000 }
     );
-  }, []);
-
-  useEffect(() => {
-    dashboardApi.chatMessages()
-      .then(({ data }) => {
-        const msgs = Array.isArray(data?.data) ? data.data : [];
-        setMessages(msgs.map((m: Message) => ({ ...m, timestamp: new Date() })));
-      })
-      .catch(() => setMessages([]))
-      .finally(() => setLoadingHistory(false));
   }, []);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading]);
 
-  // ── Direct Gemini API ─ real AI responses ─────────────────────────────────
-  const callGeminiDirect = async (userText: string, history: Message[]): Promise<string> => {
-    const GEMINI_KEY = localStorage.getItem('travelshield_gemini_api_key') || import.meta.env.VITE_GEMINI_API_KEY || '';
-    if (!GEMINI_KEY) throw new Error('No Gemini key in VITE_GEMINI_API_KEY');
-
-    const systemPrompt = `You are TravelShield AI — an expert travel safety assistant embedded in the TravelShield safety app.
-Personality: helpful, concise, friendly, highly factual. Give real actionable advice, never generic templates.
-Specialties: travel safety, crime risk, best local areas, police contacts, safe routes, crowd density, restaurant safety, tourist spots, weather & safety, local emergency numbers.
-Rules:
-- Always give specific, useful information. If you lack exact local data, give best regional advice.
-- If there are crowds or high density, warn the user ("Crowds are high, keep belongings close and stay alert").
-- If there are nearby waterbodies, rivers, or cliffs, give appropriate safety tips ("Be cautious near water/riverbanks").
-- Keep responses under 180 words. Be direct — never start with "I understand you're asking about".
-- Use bullet points when listing 3+ items. Use relevant emojis naturally.
-- For police/emergency: always give real local emergency numbers if you know the country.
-- For safety questions: give a risk level (Low/Moderate/High) and specific tips.
-- For routes: give actual advice about safe areas, times to avoid, transport options.`;
-
-    const userTextWithContext = locationContext 
-      ? `[LOCAL GEOGRAPHIC CONTEXT]\n${locationContext}\n\n[USER MESSAGE]\n${userText}`
-      : userText;
-
-    const contents = [
-      { role: 'user', parts: [{ text: systemPrompt }] },
-      { role: 'model', parts: [{ text: 'Ready. I am TravelShield AI — giving real, location-aware travel safety guidance.' }] },
-      ...history.slice(-10).map((m: Message) => ({
-        role: m.role === 'user' ? 'user' : 'model',
-        parts: [{ text: m.content }],
-      })),
-      { role: 'user', parts: [{ text: userTextWithContext }] },
-    ];
-
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents,
-          generationConfig: { maxOutputTokens: 400, temperature: 0.75, topP: 0.95 },
-        }),
-      }
-    );
-
-    if (!res.ok) {
-      const errBody = await res.text();
-      throw new Error(`Gemini ${res.status}: ${errBody.slice(0, 200)}`);
-    }
-    const json = await res.json() as {
-      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-    };
-    const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) throw new Error('Empty Gemini response');
-    return text.trim();
-  };
-
-  // ── Send handler ──────────────────────────────────────────────────────────
   const send = async (text: string) => {
     if (!text.trim() || loading) return;
+    if (!hasKey) {
+      setError('No Gemini API key found. Go to Settings and paste your key.');
+      return;
+    }
+
     setInput('');
     setError('');
     setLoading(true);
@@ -245,22 +228,42 @@ Rules:
     setMessages(prev => [...prev, userMsg]);
 
     try {
-      // 1. Try direct Gemini first (real AI answers)
-      let aiContent = '';
-      try {
-        aiContent = await callGeminiDirect(text, messages);
-      } catch (geminiErr) {
-        console.warn('Direct Gemini failed, falling back to backend:', geminiErr);
-        // 2. Backend fallback (sends text + coordinates context)
-        const { data } = await dashboardApi.sendMessage(text, userCoords?.lat, userCoords?.lng);
-        aiContent = data?.data?.assistantMessage?.content
-          || data?.data?.content
-          || data?.message
-          || 'I\'m your AI travel safety assistant. Please try again.';
-      }
+      const systemPrompt = `You are TravelShield AI — an expert travel safety assistant.
+Personality: helpful, concise, friendly, factual. Give REAL actionable advice. Never use generic templates.
+Specialties: travel safety, crime risk, police contacts, safe routes, crowd density, restaurant safety, tourist spots, weather, local emergency numbers.
+Rules:
+- Give specific, useful answers. Use the provided real location data when available.
+- Warn about crowded areas ("Crowds can be high — keep belongings close").
+- Warn about water/cliffs/rivers with safety tips.
+- Keep responses under 200 words. Use bullet points for 3+ items. Use relevant emojis.
+- For police/emergency: ALWAYS give real local emergency numbers (India: 100 police, 108 ambulance, 101 fire; use what you know for the country).
+- For safety questions: give a risk level (🟢 Low / 🟡 Moderate / 🔴 High) and specific tips.`;
+
+      const userTextWithContext = locationContext
+        ? `[MY REAL LOCATION DATA — use this to answer location questions]\n${locationContext}\n\n[MY QUESTION]\n${text}`
+        : text;
+
+      const contents = [
+        { role: 'user', parts: [{ text: systemPrompt }] },
+        { role: 'model', parts: [{ text: 'Ready. I am TravelShield AI — providing real, location-aware travel safety guidance.' }] },
+        ...messages.slice(-8).map((m: Message) => ({
+          role: m.role === 'user' ? 'user' : 'model',
+          parts: [{ text: m.content }],
+        })),
+        { role: 'user', parts: [{ text: userTextWithContext }] },
+      ];
+
+      const aiContent = await callGemini(GEMINI_KEY, contents, 450);
       setMessages(prev => [...prev, { role: 'assistant', content: aiContent, timestamp: new Date() }]);
-    } catch {
-      setError('Failed to get a response. Check your connection and try again.');
+    } catch (err) {
+      const errMsg = String(err);
+      if (errMsg.includes('API_KEY_INVALID') || errMsg.includes('401')) {
+        setError('❌ Gemini API key is invalid. Go to Settings → paste a valid key from aistudio.google.com');
+      } else if (errMsg.includes('429')) {
+        setError('⚠️ Rate limit hit. Wait a few seconds and try again.');
+      } else {
+        setError(`AI error: ${errMsg.slice(0, 120)}`);
+      }
       setMessages(prev => prev.filter(m => m !== userMsg));
     } finally {
       setLoading(false);
@@ -268,7 +271,7 @@ Rules:
     }
   };
 
-  const showWelcome = !loadingHistory && messages.length === 0;
+  const showWelcome = messages.length === 0;
 
   return (
     <>
@@ -292,6 +295,9 @@ Rules:
         @keyframes shimmer {
           0% { background-position: -200% center; }
           100% { background-position: 200% center; }
+        }
+        @keyframes spin {
+          to { transform: rotate(360deg); }
         }
         @keyframes borderGlow {
           0%, 100% { border-color: rgba(0,229,255,0.35); box-shadow: 0 0 0 3px rgba(0,229,255,0.07), 0 8px 32px rgba(0,0,0,0.5); }
@@ -317,8 +323,10 @@ Rules:
         .mic-btn { transition: all 0.15s ease; }
         .mic-btn:hover { color: #00e5ff !important; transform: scale(1.1); }
         .input-focused { animation: borderGlow 2s ease-in-out infinite; }
-        .map-chip:hover { background: rgba(0,229,255,0.18) !important; border-color: rgba(0,229,255,0.5) !important; transform: translateY(-1px); }
+        .map-chip:hover { background: rgba(0,229,255,0.18) !important; border-color: rgba(0,229,255,0.5) !important; }
         .map-chip { transition: all 0.2s ease; }
+        .quick-chip:hover { background: rgba(255,255,255,0.1) !important; }
+        .quick-chip { transition: all 0.15s ease; }
       `}</style>
 
       <div style={{
@@ -345,7 +353,7 @@ Rules:
         <div style={{
           padding: '16px 20px 14px',
           borderBottom: '1px solid rgba(255,255,255,0.06)',
-          background: 'rgba(6,13,31,0.8)',
+          background: 'rgba(6,13,31,0.9)',
           backdropFilter: 'blur(20px)',
           flexShrink: 0,
           display: 'flex',
@@ -362,7 +370,7 @@ Rules:
             <Bot size={20} color="#00e5ff" />
             <div style={{
               position: 'absolute', bottom: -2, right: -2, width: 10, height: 10,
-              background: '#34d399', borderRadius: '50%', border: '2px solid #060d1f',
+              background: hasKey ? '#34d399' : '#f59e0b', borderRadius: '50%', border: '2px solid #060d1f',
             }} />
           </div>
           <div style={{ flex: 1 }}>
@@ -370,54 +378,67 @@ Rules:
               <span className="shimmer-text" style={{ fontWeight: 700, fontSize: 15 }}>TravelShield AI</span>
               <Sparkles size={12} color="#a78bfa" />
             </div>
-            <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11, marginTop: 1 }}>
-              Powered by location intelligence
-            </p>
+            {locationLabel ? (
+              <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: 10, marginTop: 1, display: 'flex', alignItems: 'center', gap: 3 }}>
+                <MapPin size={8} /> {locationLabel}
+              </p>
+            ) : (
+              <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: 10, marginTop: 1 }}>
+                Powered by Gemini AI
+              </p>
+            )}
           </div>
           <div style={{
             display: 'flex', gap: 6, alignItems: 'center',
-            background: 'rgba(52,211,153,0.1)', borderRadius: 20, padding: '4px 10px',
-            border: '1px solid rgba(52,211,153,0.2)',
+            background: hasKey ? 'rgba(52,211,153,0.1)' : 'rgba(245,158,11,0.1)',
+            borderRadius: 20, padding: '4px 10px',
+            border: `1px solid ${hasKey ? 'rgba(52,211,153,0.2)' : 'rgba(245,158,11,0.25)'}`,
           }}>
-            <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#34d399', animation: 'pulseGlow 2s infinite' }} />
-            <span style={{ color: '#34d399', fontSize: 10, fontWeight: 600 }}>LIVE</span>
+            <div style={{ width: 6, height: 6, borderRadius: '50%', background: hasKey ? '#34d399' : '#f59e0b' }} />
+            <span style={{ color: hasKey ? '#34d399' : '#f59e0b', fontSize: 10, fontWeight: 600 }}>
+              {hasKey ? 'GEMINI' : 'NO KEY'}
+            </span>
           </div>
         </div>
 
         {/* Messages area */}
         <div className="chat-scroll" style={{
           flex: 1, overflowY: 'auto', padding: '20px 16px',
-          paddingBottom: '160px', display: 'flex', flexDirection: 'column', gap: 12,
+          paddingBottom: '170px', display: 'flex', flexDirection: 'column', gap: 12,
         }}>
-          {/* Gemini Key Missing Warning Banner */}
-          {!hasGeminiKey && (
-            <div className="glass-card p-4 flex flex-col gap-2" style={{
-              background: 'linear-gradient(135deg, rgba(245,158,11,0.06), rgba(245,158,11,0.12))',
-              border: '1px solid rgba(245,158,11,0.25)',
+
+          {/* No Key Banner */}
+          {!hasKey && (
+            <div style={{
+              background: 'linear-gradient(135deg, rgba(245,158,11,0.08), rgba(245,158,11,0.15))',
+              border: '1px solid rgba(245,158,11,0.3)',
               borderRadius: 16,
+              padding: '14px',
               animation: 'fadeSlideUp 0.3s ease forwards',
             }}>
-              <div className="flex items-center gap-2">
-                <Sparkles size={16} className="text-amber-400" />
-                <span className="text-amber-400 font-bold text-xs">Real AI API Key Missing</span>
-                <button onClick={() => setHasGeminiKey(true)} className="ml-auto text-white/30 hover:text-white/60 text-xs">✕</button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <AlertCircle size={16} color="#f59e0b" />
+                <span style={{ color: '#f59e0b', fontWeight: 700, fontSize: 13 }}>Gemini API Key Required</span>
               </div>
-              <p className="text-white/70 text-xs leading-relaxed">
-                TravelShield is using fallback canned templates. Set your free Google Gemini API Key in Settings to enable real, live AI safety suggestions.
+              <p style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12, lineHeight: 1.6, marginBottom: 10 }}>
+                Go to <b style={{ color: '#f59e0b' }}>Settings</b> and paste your free Gemini API key from <b>aistudio.google.com</b> to enable real AI responses.
               </p>
               <button
                 onClick={() => navigate('/settings')}
-                className="w-full py-1.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 rounded-xl text-amber-300 font-bold text-[10px] transition-colors cursor-pointer"
+                style={{
+                  width: '100%', padding: '10px', background: 'rgba(245,158,11,0.15)',
+                  border: '1px solid rgba(245,158,11,0.3)', borderRadius: 12,
+                  color: '#fbbf24', fontWeight: 700, fontSize: 12, cursor: 'pointer',
+                }}
               >
-                Go to Settings
+                ⚙️ Go to Settings → Paste API Key
               </button>
             </div>
           )}
 
           {/* Welcome screen */}
-          {showWelcome && (
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: 20, gap: 0 }}>
-              {/* Hero icon */}
+          {showWelcome && hasKey && (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: 20 }}>
               <div className="float-anim" style={{
                 width: 100, height: 100, borderRadius: 32,
                 background: 'linear-gradient(135deg, rgba(0,229,255,0.15), rgba(167,139,250,0.2))',
@@ -436,6 +457,17 @@ Rules:
               <p style={{ color: 'rgba(255,255,255,0.45)', fontSize: 13, textAlign: 'center', maxWidth: 260, marginBottom: 24, lineHeight: 1.6 }}>
                 Ask me anything about safety, places, routes, and travel tips anywhere in the world.
               </p>
+
+              {locationLabel && (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 6, padding: '6px 14px',
+                  background: 'rgba(52,211,153,0.08)', borderRadius: 20, border: '1px solid rgba(52,211,153,0.2)',
+                  marginBottom: 20,
+                }}>
+                  <MapPin size={10} color="#34d399" />
+                  <span style={{ color: '#34d399', fontSize: 11, fontWeight: 600 }}>Location loaded: {locationLabel}</span>
+                </div>
+              )}
 
               {/* Feature pills */}
               <div style={{ display: 'flex', gap: 8, marginBottom: 28 }}>
@@ -465,19 +497,14 @@ Rules:
                       style={{
                         background: 'rgba(255,255,255,0.04)',
                         border: `1px solid rgba(255,255,255,0.08)`,
-                        borderRadius: 14,
-                        padding: '12px',
-                        textAlign: 'left',
-                        cursor: 'pointer',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: 8,
+                        borderRadius: 14, padding: '12px',
+                        textAlign: 'left', cursor: 'pointer',
+                        display: 'flex', flexDirection: 'column', gap: 8,
                       }}
                     >
                       <div style={{
                         width: 30, height: 30, borderRadius: 10,
-                        background: `${color}18`,
-                        border: `1px solid ${color}33`,
+                        background: `${color}18`, border: `1px solid ${color}33`,
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
                       }}>
                         <Icon size={14} color={color} />
@@ -500,31 +527,45 @@ Rules:
           {/* Typing indicator */}
           {loading && <TypingIndicator />}
 
-          {/* Error */}
+          {/* Error banner */}
           {error && (
             <div style={{
-              display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px',
-              background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)',
+              display: 'flex', alignItems: 'flex-start', gap: 8, padding: '12px 14px',
+              background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)',
               borderRadius: 12, animation: 'fadeSlideUp 0.3s ease forwards',
             }}>
-              <span style={{ color: '#f87171', fontSize: 12 }}>{error}</span>
-              <button onClick={() => setError('')} style={{ marginLeft: 'auto', color: 'rgba(255,255,255,0.3)', background: 'none', border: 'none', cursor: 'pointer' }}>
+              <AlertCircle size={14} color="#f87171" style={{ flexShrink: 0, marginTop: 1 }} />
+              <div style={{ flex: 1 }}>
+                <span style={{ color: '#f87171', fontSize: 12, lineHeight: 1.5 }}>{error}</span>
+                {error.includes('key') && (
+                  <button
+                    onClick={() => navigate('/settings')}
+                    style={{
+                      display: 'block', marginTop: 6, padding: '4px 10px',
+                      background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)',
+                      borderRadius: 8, color: '#f87171', fontSize: 10, fontWeight: 700, cursor: 'pointer',
+                    }}
+                  >
+                    Go to Settings
+                  </button>
+                )}
+              </div>
+              <button onClick={() => setError('')} style={{ color: 'rgba(255,255,255,0.3)', background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0 }}>
                 <RefreshCw size={12} />
               </button>
             </div>
           )}
 
-          {/* After first AI reply — show quick follow-ups */}
-          {messages.length >= 2 && messages.length < 5 && !loading && (
+          {/* Quick follow-ups after first reply */}
+          {messages.length >= 2 && messages.length < 6 && !loading && (
             <div style={{ paddingTop: 4 }}>
               <p style={{ color: 'rgba(255,255,255,0.25)', fontSize: 10, marginBottom: 8, paddingLeft: 40 }}>Quick follow-ups:</p>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, paddingLeft: 40 }}>
-                {['Tell me more', 'Is it safe at night?', 'Nearby hospitals?'].map(q => (
-                  <button key={q} onClick={() => send(q)} style={{
+                {['Tell me more', 'Is it safe at night?', 'Nearby hospitals?', 'Best route?'].map(q => (
+                  <button key={q} onClick={() => send(q)} className="quick-chip" style={{
                     background: 'rgba(0,229,255,0.06)', border: '1px solid rgba(0,229,255,0.2)',
                     borderRadius: 20, padding: '5px 12px', color: '#00e5ff',
                     fontSize: 11, cursor: 'pointer', fontWeight: 500,
-                    transition: 'all 0.2s',
                   }}>
                     {q}
                   </button>
@@ -536,15 +577,14 @@ Rules:
           <div ref={bottomRef} />
         </div>
 
-        {/* ── Premium Input Bar ──────────────────────────────────────── */}
+        {/* Input Bar */}
         <div style={{
           position: 'fixed', bottom: 64, left: 0, right: 0,
           padding: '10px 14px 10px',
           background: 'linear-gradient(to top, rgba(6,13,31,0.98) 60%, rgba(6,13,31,0.0))',
           backdropFilter: 'blur(28px)',
         }}>
-
-          {/* Map shortcut chip */}
+          {/* Quick chips row */}
           <div style={{ display: 'flex', gap: 8, marginBottom: 10, overflowX: 'auto', paddingBottom: 2 }}>
             <button
               className="map-chip"
@@ -558,15 +598,16 @@ Rules:
               <Map size={12} color="#00e5ff" />
               <span style={{ color: '#00e5ff', fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' }}>Open Live Map</span>
             </button>
-            {['Safe route?', 'Nearby police?', 'Risk level?', 'Safe at night?'].map(q => (
+            {['Safe route?', 'Nearby police?', 'Risk level?', 'Safe at night?', 'Railway station?'].map(q => (
               <button
                 key={q}
                 onClick={() => send(q)}
+                className="quick-chip"
                 style={{
                   padding: '6px 14px', background: 'rgba(255,255,255,0.05)',
                   border: '1px solid rgba(255,255,255,0.1)', borderRadius: 20,
                   color: 'rgba(255,255,255,0.6)', fontSize: 11, cursor: 'pointer',
-                  whiteSpace: 'nowrap', transition: 'all 0.2s', flexShrink: 0,
+                  whiteSpace: 'nowrap', flexShrink: 0,
                 }}
               >{q}</button>
             ))}
@@ -574,16 +615,13 @@ Rules:
 
           {/* Main input row */}
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-            {/* Input wrapper with glowing border */}
             <div
-              className={input || document.activeElement === inputRef.current ? 'input-focused' : ''}
               style={{
                 flex: 1, display: 'flex', alignItems: 'center', gap: 4,
                 background: 'rgba(13,22,48,0.9)',
                 border: '1.5px solid rgba(255,255,255,0.12)',
                 borderRadius: 20, padding: '0 6px 0 16px',
                 boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-                transition: 'border-color 0.3s, box-shadow 0.3s',
               }}
             >
               <input
@@ -591,15 +629,14 @@ Rules:
                 value={input}
                 onChange={e => setInput(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && !e.shiftKey && send(input)}
-                placeholder="Ask about safety, places, routes..."
-                disabled={loading}
+                placeholder={hasKey ? 'Ask about safety, places, routes...' : 'Set Gemini API key in Settings first...'}
+                disabled={loading || !hasKey}
                 style={{
                   flex: 1, background: 'none', border: 'none', outline: 'none',
                   color: 'white', fontSize: 14, padding: '14px 0',
                   caretColor: '#00e5ff',
                 }}
               />
-              {/* Mic button */}
               <button
                 className="mic-btn"
                 style={{
@@ -609,26 +646,24 @@ Rules:
                   color: input ? '#00e5ff' : 'rgba(255,255,255,0.25)',
                   flexShrink: 0,
                 }}
-                onClick={() => { /* voice placeholder */ }}
-                title="Voice input"
+                onClick={() => { }}
               >
                 <Mic size={16} />
               </button>
             </div>
 
-            {/* Send button */}
             <button
               className="send-btn"
               onClick={() => send(input)}
-              disabled={loading || !input.trim()}
+              disabled={loading || !input.trim() || !hasKey}
               style={{
                 width: 50, height: 50, borderRadius: 16, border: 'none',
-                cursor: loading || !input.trim() ? 'not-allowed' : 'pointer',
-                background: loading || !input.trim()
+                cursor: (loading || !input.trim() || !hasKey) ? 'not-allowed' : 'pointer',
+                background: (loading || !input.trim() || !hasKey)
                   ? 'rgba(255,255,255,0.07)'
                   : 'linear-gradient(135deg, #00e5ff 0%, #0066ff 100%)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                boxShadow: loading || !input.trim() ? 'none' : '0 4px 20px rgba(0,229,255,0.4)',
+                boxShadow: (loading || !input.trim() || !hasKey) ? 'none' : '0 4px 20px rgba(0,229,255,0.4)',
                 flexShrink: 0,
                 transition: 'all 0.2s',
               }}
@@ -640,18 +675,17 @@ Rules:
                   animation: 'spin 0.8s linear infinite',
                 }} />
               ) : (
-                <Send size={18} color={!input.trim() ? 'rgba(255,255,255,0.25)' : 'white'}
+                <Send size={18} color={(!input.trim() || !hasKey) ? 'rgba(255,255,255,0.25)' : 'white'}
                   style={{ transform: 'translateX(1px)' }} />
               )}
             </button>
           </div>
 
-          {/* Disclaimer */}
           <p style={{
             color: 'rgba(255,255,255,0.18)', fontSize: 10, textAlign: 'center',
             marginTop: 8, letterSpacing: '0.01em',
           }}>
-            AI responses are for guidance only. Always verify local safety information.
+            Powered by Google Gemini · Responses are for guidance only
           </p>
         </div>
 

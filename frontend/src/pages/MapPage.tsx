@@ -364,9 +364,9 @@ export default function MapPage() {
 
       <div className="relative w-full" style={{ height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
         
-        {/* Toggle Mode Switch Pill */}
-        <div className="absolute top-16 left-0 right-0 z-30 flex justify-center">
-          <div className="flex bg-[#070e22]/95 border border-white/10 rounded-full p-1 shadow-2xl backdrop-blur-md">
+        {/* Toggle Mode Switch Pill — sits at very top */}
+        <div className="absolute top-0 left-0 right-0 z-30 flex justify-center pt-2 pb-1" style={{ background: 'rgba(7,14,34,0.85)', backdropFilter: 'blur(16px)' }}>
+          <div className="flex bg-[#0a1428]/90 border border-white/10 rounded-full p-1 shadow-2xl">
             <button 
               onClick={() => {
                 setSelectedMockPoint(null);
@@ -451,8 +451,8 @@ export default function MapPage() {
         {/* 2. SIMULATED RADAR FALLBACK PANEL */}
         {useSimulated && (
           <div className="w-full h-full bg-[#050b18] radar-grid flex flex-col items-center justify-center relative select-none">
-            {/* Top Indicator bar */}
-            <div className="absolute top-28 left-4 right-4 z-20 flex justify-between items-center bg-white/5 border border-white/10 rounded-xl px-4 py-2 backdrop-blur-md max-w-sm mx-auto">
+            {/* Top Indicator bar — sits below toggle pill + search bar */}
+            <div className="absolute left-4 right-4 z-20 flex justify-between items-center bg-white/5 border border-white/10 rounded-xl px-4 py-2 backdrop-blur-md max-w-sm mx-auto" style={{ top: '140px' }}>
               <div className="flex items-center gap-2">
                 <Wifi size={12} className="text-cyan animate-pulse" />
                 <span className="text-[10px] text-white/50 uppercase font-bold tracking-wider">Radar Status:</span>
@@ -549,8 +549,8 @@ export default function MapPage() {
 
         {/* 3. SHARED INTERACTIVE CONTROLS OVERLAYS */}
 
-        {/* Top Search bar input */}
-        <div className="absolute top-0 left-0 right-0 z-20 p-3">
+        {/* Search bar — below the toggle pill strip (~44px tall) */}
+        <div className="absolute left-0 right-0 z-20 p-3" style={{ top: '44px' }}>
           <div className="relative max-w-2xl mx-auto">
             <div className="flex gap-2 items-center bg-[#070e22]/95 border border-white/10 rounded-2xl px-4 h-12 shadow-2xl backdrop-blur-md">
               <Search className="w-4 h-4 text-cyan" />

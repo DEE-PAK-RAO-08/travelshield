@@ -150,9 +150,9 @@ export default function SosPage() {
     if ('vibrate' in navigator) navigator.vibrate([500, 200, 500, 200, 500]);
     
     try {
-      let latitude = 1.2834;
-      let longitude = 103.8607;
-      let location = 'Marina Bay Area, Sector 4';
+      let latitude = 0;
+      let longitude = 0;
+      let location = 'Location unavailable';
       
       try {
         const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
@@ -160,7 +160,7 @@ export default function SosPage() {
         });
         latitude = pos.coords.latitude;
         longitude = pos.coords.longitude;
-        location = `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
+        location = `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
       } catch (err) {
         console.warn('Geolocation failed or timed out:', err);
       }
@@ -298,18 +298,34 @@ export default function SosPage() {
               onTouchStart={startHold}
               onTouchEnd={endHold}
               onTouchCancel={endHold}
-              className={`relative w-48 h-48 rounded-full border-4 flex items-center justify-center transition-all ${
+              className={`relative w-48 h-48 rounded-full border-4 flex flex-col items-center justify-center gap-2 transition-all select-none ${
                 holding ? 'bg-danger/30 border-danger scale-105' : 'bg-danger/10 border-danger/50'
               }`}
-              style={{ boxShadow: holding ? '0 0 40px rgba(239,68,68,0.6)' : '0 0 20px rgba(239,68,68,0.3)' }}
+              style={{ boxShadow: holding ? '0 0 50px rgba(239,68,68,0.7), 0 0 100px rgba(239,68,68,0.2)' : '0 0 25px rgba(239,68,68,0.3)', touchAction: 'none' }}
             >
+              {/* Progress ring */}
               {holding && (
-                <svg className="absolute inset-0 w-full h-full -rotate-90">
-                  <circle cx="96" cy="96" r="90" fill="none" stroke="rgba(239,68,68,0.3)" strokeWidth="4" />
-                  <circle cx="96" cy="96" r="90" fill="none" stroke="#ef4444" strokeWidth="4" strokeDasharray={`${progress * 5.65} 565`} />
+                <svg className="absolute inset-0 w-full h-full -rotate-90" style={{ pointerEvents: 'none' }}>
+                  <circle cx="96" cy="96" r="88" fill="none" stroke="rgba(239,68,68,0.15)" strokeWidth="6" />
+                  <circle cx="96" cy="96" r="88" fill="none" stroke="#ef4444" strokeWidth="6"
+                    strokeDasharray={`${progress * 5.53} 553`}
+                    strokeLinecap="round"
+                    style={{ transition: 'stroke-dasharray 0.1s linear' }}
+                  />
                 </svg>
               )}
-              <span className="text-2xl font-bold text-white relative z-10">SOS</span>
+              {/* Outer pulse rings (idle) */}
+              {!holding && (
+                <>
+                  <div className="absolute inset-[-12px] rounded-full border border-red-500/20 animate-ping" style={{ animationDuration: '2s' }} />
+                  <div className="absolute inset-[-24px] rounded-full border border-red-500/10 animate-ping" style={{ animationDuration: '2.5s', animationDelay: '0.3s' }} />
+                </>
+              )}
+              <HeartPulse className={`w-10 h-10 text-red-400 relative z-10 ${holding ? 'animate-pulse' : ''}`} />
+              <span className="text-3xl font-black text-white relative z-10 tracking-widest">SOS</span>
+              <span className="text-[10px] text-red-300/70 relative z-10 font-semibold tracking-wider">
+                {holding ? `${Math.round(progress)}%` : 'HOLD 3s'}
+              </span>
             </button>
           )}
         </div>
