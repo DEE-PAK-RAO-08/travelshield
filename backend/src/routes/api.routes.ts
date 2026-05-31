@@ -1043,4 +1043,30 @@ router.post('/admin/alerts', authenticate, authorize('ADMIN'), asyncHandler(asyn
   res.status(201).json({ success: true, data: alert });
 }));
 
+router.post('/device-tokens', authenticate, asyncHandler(async (req, res) => {
+  const { token, platform } = req.body;
+  const deviceToken = await prisma.deviceToken.upsert({
+    where: { token },
+    update: { userId: req.user!.userId, platform },
+    create: { token, platform, userId: req.user!.userId },
+  });
+  res.status(201).json({ success: true, data: deviceToken });
+}));
+
+router.post('/tracking/start', authenticate, asyncHandler(async (req, res) => {
+  const session = await prisma.trackingSession.create({
+    data: { userId: req.user!.userId, isActive: true },
+  });
+  res.status(201).json({ success: true, data: session });
+}));
+
+router.post('/tracking/stop', authenticate, asyncHandler(async (req, res) => {
+  const { sessionId } = req.body;
+  const session = await prisma.trackingSession.update({
+    where: { id: sessionId },
+    data: { isActive: false, endTime: new Date() },
+  });
+  res.json({ success: true, data: session });
+}));
+
 export default router;

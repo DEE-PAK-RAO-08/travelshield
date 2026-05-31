@@ -69,6 +69,8 @@ model User {
   safetyScores      SafetyScore[]
   activityLogs      ActivityLog[]
   preferences       UserPreferences?
+  deviceTokens      DeviceToken[]
+  trackingSessions  TrackingSession[]
 
   @@index([email])
   @@index([role])
@@ -320,6 +322,35 @@ model ActivityLog {
   user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([userId])
-  @@index([action])
   @@index([createdAt])
 }
+
+model DeviceToken {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  platform  String   // 'android' | 'ios' | 'web'
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model TrackingSession {
+  id        String   @id @default(uuid())
+  userId    String
+  isActive  Boolean  @default(true)
+  startTime DateTime @default(now())
+  endTime   DateTime?
+  pathData  Json?    // Store array of {lat, lng, timestamp}
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([isActive])
+}
+
