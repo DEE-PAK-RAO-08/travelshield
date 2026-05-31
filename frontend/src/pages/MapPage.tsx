@@ -4,7 +4,7 @@ import {
 } from 'lucide-react';
 import { BackgroundGlow } from '@/components/ui/BackgroundGlow';
 import { BottomNav } from '@/components/layout/BottomNav';
-import { dashboardApi } from '@/api/client';
+import api, { dashboardApi } from '@/api/client';
 import { getSocket } from '@/api/socket';
 
 // Leaflet Imports
@@ -40,12 +40,15 @@ interface MockPoint {
   y?: number;
 }
 
-// Component to recenter map when location changes
-function MapRecenter({ center }: { center: { lat: number; lng: number } }) {
+// Component to recenter and invalidate map sizing
+function MapRecenter({ center, trigger, showDrawer }: { center: { lat: number; lng: number }; trigger: number; showDrawer: boolean }) {
   const map = useMap();
   useEffect(() => {
-    map.setView(center, map.getZoom());
-  }, [center, map]);
+    map.setView(center, 15);
+    setTimeout(() => {
+      map.invalidateSize();
+    }, 250);
+  }, [center, trigger, showDrawer, map]);
   return null;
 }
 
@@ -106,6 +109,7 @@ export default function MapPage() {
 
   const [showDrawer, setShowDrawer] = useState(true); // Default to showing service list
   const [heatmapActive, setHeatmapActive] = useState(true); // Glowing safety heatmap
+  const [recenterTrigger, setRecenterTrigger] = useState(0);
 
   // Helper to procedurally enrich points to ensure 100+ in each category
   const getEnrichedPoints = useCallback(() => {
@@ -404,10 +408,8 @@ out center;`;
   const startTracking = async () => {
     try {
       await dashboardApi.triggerSos({ type: 'LIVE_TRACK' }); // Create tracking event
-      const trackRes = await fetch(import.meta.env.VITE_API_URL + '/tracking/start', {
-        method: 'POST',
-        headers: { 'Authorization': 'Bearer ' + localStorage.getItem('accessToken') }
-      }).then(r => r.json());
+      const res = await api.post('/tracking/start');
+      const trackRes = res.data;
       
       if (trackRes.success) {
         setTrackingSessionId(trackRes.data.id);
@@ -613,7 +615,7 @@ out center;`;
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
               />
-              <MapRecenter center={userLocation} />
+              <MapRecenter center={userLocation} trigger={recenterTrigger} showDrawer={showDrawer} />
               
               {/* User Location */}
               <Marker position={userLocation} icon={userIcon} />
@@ -900,7 +902,15 @@ out center;`;
             </button>
           )}
 
-          <button onClick={() => { setSelectedMockPoint(null); setSimulatedRouteActive(false); }} className="w-12 h-12 bg-[#070f24]/90 border border-white/10 rounded-full flex items-center justify-center shadow-2xl backdrop-blur-md text-cyan hover:text-white transition-colors">
+          <button 
+            onClick={() => { 
+              setSelectedMockPoint(null); 
+              setSimulatedRouteActive(false); 
+              setRecenterTrigger(prev => prev + 1); 
+            }} 
+            className="w-12 h-12 bg-[#070f24]/90 border border-white/10 rounded-full flex items-center justify-center shadow-2xl backdrop-blur-md text-cyan hover:text-white transition-colors"
+            title="Recenter Map on User GPS"
+          >
             <Crosshair className="w-5 h-5" />
           </button>
           <button onClick={trackingSessionId ? stopTracking : startTracking} className={`w-12 h-12 rounded-full font-bold shadow-2xl border flex items-center justify-center backdrop-blur-md transition-all active:scale-95 ${trackingSessionId ? 'bg-red-500/20 border-red-500 text-red-400' : 'bg-[#070f24]/90 border border-white/10 text-cyan hover:text-white'}`}>
