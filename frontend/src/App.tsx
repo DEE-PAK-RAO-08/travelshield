@@ -21,7 +21,23 @@ import AdminPage from '@/pages/AdminPage';
 import VerifyEmailPage from '@/pages/VerifyEmailPage';
 import VerifyPassportPage from '@/pages/VerifyPassportPage';
 
+import { useEffect } from 'react';
+import { useAuthStore } from '@/store/authStore';
+import { initializeSocket, disconnectSocket } from '@/api/socket';
+
 export default function App() {
+  const { isAuthenticated, accessToken } = useAuthStore();
+
+  useEffect(() => {
+    if (isAuthenticated && accessToken) {
+      initializeSocket(accessToken);
+    } else {
+      disconnectSocket();
+    }
+    
+    return () => disconnectSocket();
+  }, [isAuthenticated, accessToken]);
+
   return (
     <BrowserRouter>
       <Routes>
