@@ -1,13 +1,12 @@
-import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import {
-  Search, Crosshair, Navigation, X, Layers, MapPin, ChevronRight,
-  Shield, Users, AlertTriangle, ChevronDown, ChevronUp, Clock, Route
+  Search, Crosshair, Navigation, X, MapPin
 } from 'lucide-react';
 import { BackgroundGlow } from '@/components/ui/BackgroundGlow';
 import { BottomNav } from '@/components/layout/BottomNav';
 import { dashboardApi } from '@/api/client';
 import { getSocket } from '@/api/socket';
-import { GoogleMap, useJsApiLoader, Marker, DirectionsRenderer, Circle } from '@react-google-maps/api';
+import { GoogleMap, useJsApiLoader, Marker, DirectionsRenderer } from '@react-google-maps/api';
 
 const libraries: ("places" | "geometry")[] = ['places', 'geometry'];
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
@@ -148,7 +147,7 @@ export default function MapPage() {
 
   const startTracking = async () => {
     try {
-      const res = await dashboardApi.triggerSos({ type: 'LIVE_TRACK' }); // Create a tracking session implicitly
+      await dashboardApi.triggerSos({ type: 'LIVE_TRACK' }); // Create a tracking session implicitly
       // We added /api/tracking/start in Phase 1, we can call that!
       const trackRes = await fetch(import.meta.env.VITE_API_URL + '/tracking/start', {
         method: 'POST',
@@ -217,6 +216,22 @@ export default function MapPage() {
             <DirectionsRenderer directions={directionsResponse} options={{ suppressMarkers: false, polylineOptions: { strokeColor: '#00e5ff', strokeWeight: 5 } }} />
           )}
         </GoogleMap>
+
+        {/* Route Info Overlay */}
+        {directionsResponse && distance && duration && (
+          <div className="absolute bottom-20 left-4 right-4 z-20 max-w-sm mx-auto bg-[#0d1b3e]/95 border border-cyan/30 rounded-2xl p-4 shadow-xl animate-fadeSlideUp">
+            <div className="flex justify-between items-center">
+              <div>
+                <p className="text-white/40 text-[10px] uppercase tracking-wider font-bold">Route Estimate</p>
+                <h4 className="text-white text-sm font-semibold truncate mt-0.5">{destination?.name}</h4>
+              </div>
+              <div className="text-right">
+                <span className="text-cyan font-bold text-sm block">{duration}</span>
+                <span className="text-white/60 text-xs mt-0.5 block">{distance}</span>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Search Bar */}
         <div className="absolute top-0 left-0 right-0 z-20 p-3">
