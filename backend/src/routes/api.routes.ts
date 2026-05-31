@@ -663,12 +663,32 @@ router.post(
       where: { userId: req.user!.userId, autoAlert: true },
     });
 
+    let contactsNotified = 0;
+    try {
+      const { smsService } = await import('../services/sms.service');
+      const user = await prisma.user.findUnique({
+        where: { id: req.user!.userId },
+      });
+      const name = user ? `${user.firstName} ${user.lastName}` : 'TravelShield User';
+      const mapUrl = (latitude && longitude) ? `\nLocation: https://maps.google.com/?q=${latitude},${longitude}` : '';
+      const alertMessage = `🚨 URGENT SOS! ${name} needs help.${mapUrl}`;
+
+      await Promise.all(
+        contacts.map(async (c) => {
+          const sent = await smsService.sendEmergencyAlert(c.phone, alertMessage);
+          if (sent) contactsNotified++;
+        })
+      );
+    } catch (err) {
+      console.error('Failed to dispatch automatic SOS alerts:', err);
+    }
+
     res.status(201).json({
       success: true,
       data: {
         event,
         message: 'Emergency alert sent',
-        contactsNotified: contacts.length,
+        contactsNotified,
       },
     });
   })
