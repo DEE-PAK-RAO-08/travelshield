@@ -18,18 +18,23 @@ export default function SosPage() {
       .catch(err => console.error('Failed to load contacts for SOS:', err));
   }, []);
 
-  const dischargeWhatsApp = () => {
+  const sendToContact = (phone: string) => {
+    // Strip everything except digits and leading +
+    const cleanPhone = phone.replace(/[^\d+]/g, '');
+    // Ensure phone has country code (prefix +91 if 10-digit Indian number)
+    const intlPhone = cleanPhone.startsWith('+') ? cleanPhone : `+91${cleanPhone}`;
+    
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         const lat = pos.coords.latitude;
         const lng = pos.coords.longitude;
         const alertMsg = `🚨 URGENT SOS! I need help. I have triggered TravelShield SOS.\nLive Location: https://maps.google.com/?q=${lat},${lng}`;
-        const waUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(alertMsg)}`;
+        const waUrl = `https://wa.me/${intlPhone.replace('+', '')}?text=${encodeURIComponent(alertMsg)}`;
         window.open(waUrl, '_blank');
       },
       () => {
         const alertMsg = `🚨 URGENT SOS! I need help. I have triggered TravelShield SOS. Location unavailable.`;
-        const waUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(alertMsg)}`;
+        const waUrl = `https://wa.me/${intlPhone.replace('+', '')}?text=${encodeURIComponent(alertMsg)}`;
         window.open(waUrl, '_blank');
       }
     );
@@ -205,13 +210,20 @@ export default function SosPage() {
                 Device routing requires user confirmation to dispatch WhatsApp payload.
               </p>
 
-              <button
-                onClick={dischargeWhatsApp}
-                className="w-full py-3.5 bg-red-600 hover:bg-red-700 active:scale-[0.98] text-white font-bold rounded-xl transition-all shadow-[0_4px_20px_rgba(220,38,38,0.4)] flex items-center justify-center gap-2 mb-4"
-              >
-                <MessageCircle className="w-5 h-5 animate-pulse" />
-                Discharge WhatsApp to all {contacts.length} Contacts Now
-              </button>
+              <div className="w-full space-y-3 mb-4">
+                {contacts.length === 0 ? (
+                  <p className="text-white/40 text-center text-xs py-2">No emergency contacts found. Add them in Profile.</p>
+                ) : contacts.map((contact, index) => (
+                  <button
+                    key={contact.id || index}
+                    onClick={() => sendToContact(contact.phone)}
+                    className="w-full py-4 bg-green-600 hover:bg-green-700 active:scale-[0.98] text-white font-bold rounded-xl transition-all shadow-[0_4px_20px_rgba(22,163,74,0.4)] flex items-center justify-center gap-2 text-[15px]"
+                  >
+                    <MessageCircle className="w-5 h-5 animate-pulse" />
+                    Send WhatsApp to {contact.name}
+                  </button>
+                ))}
+              </div>
 
               <button 
                 onClick={() => {
