@@ -83,7 +83,7 @@ function MessageBubble({ msg, index }: { msg: Message; index: number }) {
 }
 
 // ── Try Gemini API with multiple models/endpoints ────────────────────────────
-async function callGemini(key: string, contents: object[], maxTokens = 400): Promise<string> {
+async function callGemini(key: string, contents: object[], maxTokens = 800): Promise<string> {
   const models = [
     'gemini-2.5-flash',
     'gemini-flash-latest',
@@ -95,6 +95,17 @@ async function callGemini(key: string, contents: object[], maxTokens = 400): Pro
 
   for (const model of models) {
     try {
+      const isReasoningModel = model.includes('2.5') || model.includes('2.0');
+      const generationConfig: any = {
+        maxOutputTokens: maxTokens,
+        temperature: 0.75,
+        topP: 0.95,
+      };
+
+      if (isReasoningModel) {
+        generationConfig.thinkingConfig = { thinkingBudget: 0 };
+      }
+
       const res = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
         {
@@ -102,7 +113,7 @@ async function callGemini(key: string, contents: object[], maxTokens = 400): Pro
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             contents,
-            generationConfig: { maxOutputTokens: maxTokens, temperature: 0.75, topP: 0.95 },
+            generationConfig,
           }),
         }
       );
@@ -253,7 +264,7 @@ Rules:
         { role: 'user', parts: [{ text: userTextWithContext }] },
       ];
 
-      const aiContent = await callGemini(GEMINI_KEY, contents, 450);
+      const aiContent = await callGemini(GEMINI_KEY, contents, 800);
       setMessages(prev => [...prev, { role: 'assistant', content: aiContent, timestamp: new Date() }]);
     } catch (err) {
       const errMsg = String(err);
