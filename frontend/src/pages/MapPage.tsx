@@ -49,19 +49,39 @@ function MapRecenter({ center }: { center: { lat: number; lng: number } }) {
   return null;
 }
 
-// Custom Leaflet Icons using Lucide / HTML
-const createCustomIcon = (color: string) => L.divIcon({
-  html: `<div style="background-color: ${color}; width: 14px; height: 14px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 10px ${color};"></div>`,
+// Custom Leaflet Icons with emoji labels
+const createCustomIcon = (emoji: string, color: string) => L.divIcon({
+  html: `<div style="
+    background-color: ${color};
+    width: 30px; height: 30px;
+    border-radius: 50%;
+    border: 2.5px solid white;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.5), 0 0 12px ${color}88;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px;
+    line-height: 1;
+  ">${emoji}</div>`,
   className: 'custom-leaflet-icon',
-  iconSize: [14, 14],
-  iconAnchor: [7, 7]
+  iconSize: [30, 30],
+  iconAnchor: [15, 15],
+  popupAnchor: [0, -15],
 });
 
+const getCatIcon = (category: string) => {
+  switch (category) {
+    case 'police':         return createCustomIcon('🚔', '#2563eb');
+    case 'hospital':       return createCustomIcon('🏥', '#dc2626');
+    case 'fire_station':   return createCustomIcon('🚒', '#d97706');
+    case 'transit_station': return createCustomIcon('🚌', '#059669');
+    default:               return createCustomIcon('📍', '#6366f1');
+  }
+};
+
 const userIcon = L.divIcon({
-  html: `<div style="background-color: #00e5ff; width: 16px; height: 16px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 15px #00e5ff, 0 0 30px #00e5ff;"></div>`,
+  html: `<div style="background-color: #00e5ff; width: 18px; height: 18px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 15px #00e5ff, 0 0 30px #00e5ff;"></div>`,
   className: 'user-leaflet-icon',
-  iconSize: [16, 16],
-  iconAnchor: [8, 8]
+  iconSize: [18, 18],
+  iconAnchor: [9, 9]
 });
 
 export default function MapPage() {
@@ -84,153 +104,141 @@ export default function MapPage() {
   const [safeZones, setSafeZones] = useState<any[]>([]);
   const [loadingReal, setLoadingReal] = useState(false);
 
-  // Fetch POIs and Safe Zones dynamically from Nominatim and our Backend
+  // Fetch POIs and Safe Zones via Overpass API (ALL real local amenities)
   useEffect(() => {
-    // Skip default center before tracking gets user location
     if (userLocation.lat === defaultCenter.lat && userLocation.lng === defaultCenter.lng) return;
 
     let isMounted = true;
     setLoadingReal(true);
 
     const loadData = async () => {
-      try {
-        const lat = userLocation.lat;
-        const lng = userLocation.lng;
+      const lat = userLocation.lat;
+      const lng = userLocation.lng;
+      const radius = 5000; // 5km
 
-        // 1. Fetch safe zones and custom POIs from backend
-        let backendPois: any[] = [];
-        let backendZones: any[] = [];
+      try {
+        // 1. Fetch safe zones from backend (fire and forget)
         try {
           const res = await dashboardApi.mapNearby(lat, lng);
-          if (res.data?.success) {
-            backendPois = res.data.data.pointsOfInterest || [];
-            backendZones = res.data.data.safeZones || [];
-            if (isMounted) {
-              setSafeZones(backendZones);
-            }
+          if (res.data?.success && isMounted) {
+            setSafeZones(res.data.data.safeZones || []);
           }
-        } catch (err) {
-          console.warn("Failed to fetch backend map data:", err);
-        }
+        } catch { /* non-critical */ }
 
-        // 2. Query Nominatim for real local emergency points
-        const categories = [
-          { id: 'police', query: 'police station' },
-          { id: 'hospital', query: 'hospital' },
-          { id: 'fire_station', query: 'fire station' },
-          { id: 'transit_station', query: 'railway station' },
-        ];
+        // 2. Build Overpass QL query for ALL emergency / safety amenities
+        const overpassQuery = `
+[out:json][timeout:30];
+(
+  node["amenity"="police"](around:${radius},${lat},${lng});
+  node["amenity"="hospital"](around:${radius},${lat},${lng});
+  way["amenity"="hospital"](around:${radius},${lat},${lng});
+  node["amenity"="clinic"](around:${radius},${lat},${lng});
+  way["amenity"="clinic"](around:${radius},${lat},${lng});
+  node["amenity"="doctors"](around:${radius},${lat},${lng});
+  node["healthcare"="hospital"](around:${radius},${lat},${lng});
+  node["healthcare"="clinic"](around:${radius},${lat},${lng});
+  node["amenity"="fire_station"](around:${radius},${lat},${lng});
+  way["amenity"="fire_station"](around:${radius},${lat},${lng});
+  node["amenity"="bus_station"](around:${radius},${lat},${lng});
+  way["amenity"="bus_station"](around:${radius},${lat},${lng});
+  node["highway"="bus_stop"](around:${radius},${lat},${lng});
+  node["railway"="station"](around:${radius},${lat},${lng});
+  node["railway"="halt"](around:${radius},${lat},${lng});
+  node["railway"="tram_stop"](around:${radius},${lat},${lng});
+  node["amenity"="bus_stop"](around:${radius},${lat},${lng});
+);
+out center;`;
 
-        const osmPromises = categories.map(async (cat) => {
-          try {
-            const response = await fetch(
-              `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(cat.query)}&lat=${lat}&lon=${lng}&limit=4`,
-              { headers: { 'User-Agent': 'TravelShield-AI-App' } }
-            );
-            if (!response.ok) return [];
-            const data = await response.json() as any[];
-            return data.map((item, index) => {
-              const itemLat = parseFloat(item.lat);
-              const itemLng = parseFloat(item.lon);
-              const distKm = getDistanceKm(lat, lng, itemLat, itemLng);
-              const distStr = distKm < 1 ? `${Math.round(distKm * 1000)}m` : `${distKm.toFixed(1)}km`;
-
-              return {
-                id: `osm-${cat.id}-${index}-${item.place_id || Math.random()}`,
-                name: item.name || item.display_name?.split(',')[0] || `${cat.id.replace('_', ' ')}`,
-                category: cat.id as any,
-                lat: itemLat,
-                lng: itemLng,
-                safetyScore: Math.round(90 + Math.random() * 9),
-                distance: distStr,
-                address: item.display_name?.split(',').slice(0, 3).join(',') || 'Nearby location',
-                description: `Real-time verified emergency location in the area. Patrolled and monitored.`,
-              };
-            });
-          } catch {
-            return [];
-          }
+        const response = await fetch('https://overpass-api.de/api/interpreter', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: 'data=' + encodeURIComponent(overpassQuery),
         });
 
-        // Bus stops query as alternate transit points
-        const transitAltPromise = (async () => {
-          try {
-            const response = await fetch(
-              `https://nominatim.openstreetmap.org/search?format=json&q=bus+station&lat=${lat}&lon=${lng}&limit=3`,
-              { headers: { 'User-Agent': 'TravelShield-AI-App' } }
-            );
-            if (!response.ok) return [];
-            const data = await response.json() as any[];
-            return data.map((item, index) => {
-              const itemLat = parseFloat(item.lat);
-              const itemLng = parseFloat(item.lon);
-              const distKm = getDistanceKm(lat, lng, itemLat, itemLng);
-              const distStr = distKm < 1 ? `${Math.round(distKm * 1000)}m` : `${distKm.toFixed(1)}km`;
-              return {
-                id: `osm-transit-alt-${index}-${item.place_id || Math.random()}`,
-                name: item.name || item.display_name?.split(',')[0] || 'Bus Stop',
-                category: 'transit_station' as const,
-                lat: itemLat,
-                lng: itemLng,
-                safetyScore: Math.round(85 + Math.random() * 12),
-                distance: distStr,
-                address: item.display_name?.split(',').slice(0, 3).join(',') || 'Transit Stop',
-                description: `Public transit connection spot. Stay alert during late hours.`,
-              };
-            });
-          } catch {
-            return [];
+        if (!response.ok) throw new Error(`Overpass error: ${response.status}`);
+        const data = await response.json() as { elements: any[] };
+
+        const categorize = (el: any): MockPoint['category'] | null => {
+          const a = el.tags?.amenity || '';
+          const h = el.tags?.healthcare || '';
+          const railway = el.tags?.railway || '';
+          const highway = el.tags?.highway || '';
+
+          if (a === 'police') return 'police';
+          if (a === 'hospital' || a === 'clinic' || a === 'doctors' || h === 'hospital' || h === 'clinic') return 'hospital';
+          if (a === 'fire_station') return 'fire_station';
+          if (a === 'bus_station' || a === 'bus_stop' || highway === 'bus_stop' ||
+              railway === 'station' || railway === 'halt' || railway === 'tram_stop') return 'transit_station';
+          return null;
+        };
+
+        const descFor = (cat: string, tags: any): string => {
+          switch (cat) {
+            case 'police': return 'Police station — emergency: 100 (India). Provides law enforcement & public safety.';
+            case 'hospital': return `${tags?.amenity === 'clinic' ? 'Clinic / Medical centre' : 'Hospital / Emergency ward'}. Emergency ambulance: 108.`;
+            case 'fire_station': return 'Fire & rescue station. Emergency: 101. Handles fire, accidents & disaster response.';
+            case 'transit_station': return tags?.railway ? 'Railway / train station. Platform monitored by RPF security.' : 'Bus stand / transit stop. Stay alert during peak hours.';
+            default: return 'Local safety service.';
           }
-        })();
+        };
 
-        const results = await Promise.all([...osmPromises, transitAltPromise]);
-        let combinedPoints = results.flat();
+        const points: MockPoint[] = [];
+        const seen = new Set<string>();
 
-        // 3. Map backend POIs
-        const mappedBackendPois = backendPois.map((p, i) => {
-          const distKm = getDistanceKm(lat, lng, p.latitude, p.longitude);
+        for (const el of data.elements) {
+          const cat = categorize(el);
+          if (!cat) continue;
+
+          // Resolve lat/lng — nodes have direct coords, ways have center
+          const elLat = el.lat ?? el.center?.lat;
+          const elLng = el.lon ?? el.center?.lon;
+          if (!elLat || !elLng) continue;
+
+          const name = el.tags?.name || el.tags?.['name:en'] || el.tags?.operator ||
+            (cat === 'police' ? 'Police Station' :
+             cat === 'hospital' ? (el.tags?.amenity === 'clinic' ? 'Clinic' : 'Hospital') :
+             cat === 'fire_station' ? 'Fire Station' : 'Bus/Rail Stop');
+
+          const dedupKey = `${Math.round(elLat * 1000)}-${Math.round(elLng * 1000)}-${cat}`;
+          if (seen.has(dedupKey)) continue;
+          seen.add(dedupKey);
+
+          const distKm = getDistanceKm(lat, lng, elLat, elLng);
           const distStr = distKm < 1 ? `${Math.round(distKm * 1000)}m` : `${distKm.toFixed(1)}km`;
-          return {
-            id: `backend-poi-${p.id || i}`,
-            name: p.name,
-            category: (p.type === 'police' ? 'police' : 'hospital') as any,
-            lat: p.latitude,
-            lng: p.longitude,
-            safetyScore: 95,
+          const addr = [el.tags?.['addr:street'], el.tags?.['addr:suburb'], el.tags?.['addr:city']]
+            .filter(Boolean).join(', ') || el.tags?.['is_in'] || '';
+
+          points.push({
+            id: `op-${el.id}`,
+            name,
+            category: cat,
+            lat: elLat,
+            lng: elLng,
+            safetyScore: cat === 'police' ? 97 : cat === 'hospital' ? 98 : cat === 'fire_station' ? 96 : 92,
             distance: distStr,
-            address: p.description || 'Verified Service Location',
-            description: p.description || 'Verified local emergency responder post.',
-          };
+            address: addr || `${distStr} away`,
+            description: descFor(cat, el.tags),
+          });
+        }
+
+        // Sort by distance
+        points.sort((a, b) => {
+          const dA = getDistanceKm(lat, lng, a.lat, a.lng);
+          const dB = getDistanceKm(lat, lng, b.lat, b.lng);
+          return dA - dB;
         });
 
-        combinedPoints = [...mappedBackendPois, ...combinedPoints];
-
-        // Deduplicate
-        const uniquePoints: MockPoint[] = [];
-        const seenNames = new Set<string>();
-        for (const pt of combinedPoints) {
-          const key = `${pt.name.toLowerCase()}-${pt.category}`;
-          if (!seenNames.has(key)) {
-            seenNames.add(key);
-            uniquePoints.push(pt);
-          }
-        }
-
-        if (isMounted) {
-          setRealPoints(uniquePoints);
-        }
+        if (isMounted) setRealPoints(points);
       } catch (err) {
-        console.error("Error loading real places:", err);
+        console.error('Overpass API error:', err);
+        // Fallback: leave realPoints empty so getMockPoints() kicks in
       } finally {
         if (isMounted) setLoadingReal(false);
       }
     };
 
     loadData();
-
-    return () => {
-      isMounted = false;
-    };
+    return () => { isMounted = false; };
   }, [userLocation]);
 
   // Generate Mock Points based on User Location
@@ -451,27 +459,20 @@ export default function MapPage() {
                 />
               ))}
 
-              {/* Dynamic Places Markers (using our simulated points on the real map!) */}
-              {currentMockPoints.map((pt) => {
-                const catColor = 
-                  pt.category === 'police' ? '#3b82f6' : 
-                  pt.category === 'hospital' ? '#ef4444' : 
-                  pt.category === 'fire_station' ? '#f59e0b' : '#10b981';
-
-                return (
-                  <Marker 
-                    key={pt.id} 
-                    position={{ lat: pt.lat, lng: pt.lng }}
-                    icon={createCustomIcon(catColor)}
-                    eventHandlers={{
-                      click: () => {
-                        setSelectedMockPoint(pt);
-                        setSimulatedRouteActive(false);
-                      }
-                    }}
-                  />
-                );
-              })}
+              {/* Dynamic Places Markers — real locations from Overpass */}
+              {currentMockPoints.map((pt) => (
+                <Marker
+                  key={pt.id}
+                  position={{ lat: pt.lat, lng: pt.lng }}
+                  icon={getCatIcon(pt.category)}
+                  eventHandlers={{
+                    click: () => {
+                      setSelectedMockPoint(pt);
+                      setSimulatedRouteActive(false);
+                    }
+                  }}
+                />
+              ))}
 
               {/* Draw Route Polyline if active */}
               {simulatedRouteActive && selectedMockPoint && (
@@ -565,19 +566,32 @@ export default function MapPage() {
 
             <div className="flex gap-2 mt-2 overflow-x-auto pb-2 scrollbar-none justify-center">
               {[
-                { id: 'police', label: 'Police Stations' },
-                { id: 'hospital', label: 'Hospitals' },
-                { id: 'fire_station', label: 'Safety Services' },
-                { id: 'transit_station', label: 'Safe Transit' }
-              ].map((cat) => (
-                <button
-                  key={cat.id}
-                  onClick={() => { setActiveCategory(cat.id === activeCategory ? null : cat.id); setSelectedMockPoint(null); setSimulatedRouteActive(false); }}
-                  className={`px-3 py-1.5 rounded-full text-xs font-semibold capitalize border transition-all ${activeCategory === cat.id ? 'bg-cyan/20 border-cyan text-white shadow-md shadow-cyan/10' : 'bg-[#070e22]/90 border-white/10 text-white/50 hover:text-white/85'}`}
-                >
-                  {cat.label}
-                </button>
-              ))}
+                { id: 'police',          label: '🚔 Police',    color: 'rgba(37,99,235,0.2)',  border: 'rgba(37,99,235,0.5)' },
+                { id: 'hospital',        label: '🏥 Hospitals', color: 'rgba(220,38,38,0.2)',  border: 'rgba(220,38,38,0.5)' },
+                { id: 'fire_station',    label: '🚒 Safety',    color: 'rgba(217,119,6,0.2)',  border: 'rgba(217,119,6,0.5)' },
+                { id: 'transit_station', label: '🚌 Transit',   color: 'rgba(5,150,105,0.2)', border: 'rgba(5,150,105,0.5)' },
+              ].map((cat) => {
+                const count = activePoints.filter(p => p.category === cat.id).length;
+                return (
+                  <button
+                    key={cat.id}
+                    onClick={() => { setActiveCategory(cat.id === activeCategory ? null : cat.id); setSelectedMockPoint(null); setSimulatedRouteActive(false); }}
+                    style={activeCategory === cat.id ? { background: cat.color, borderColor: cat.border } : {}}
+                    className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                      activeCategory === cat.id
+                        ? 'text-white shadow-md'
+                        : 'bg-[#070e22]/90 border-white/10 text-white/50 hover:text-white/85'
+                    }`}
+                  >
+                    {cat.label}
+                    {count > 0 && (
+                      <span className={`text-[9px] font-bold px-1 py-0.5 rounded-full ${
+                        activeCategory === cat.id ? 'bg-white/20 text-white' : 'bg-white/10 text-white/60'
+                      }`}>{count}</span>
+                    )}
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>
