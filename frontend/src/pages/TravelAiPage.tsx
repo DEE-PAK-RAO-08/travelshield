@@ -96,6 +96,75 @@ export default function TravelAiPage() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Geolocation and OSM local context state
+  const [userCoords, setUserCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [locationContext, setLocationContext] = useState<string>('');
+
+  useEffect(() => {
+    if (!('geolocation' in navigator)) return;
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        setUserCoords({ lat, lng });
+
+        try {
+          // 1. Fetch Area/Neighborhood Name
+          const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=14`, {
+            headers: { 'User-Agent': 'TravelShield-AI-App' }
+          });
+          let areaStr = '';
+          if (geoRes.ok) {
+            const geoData = await geoRes.json() as any;
+            areaStr = geoData.address?.suburb || geoData.address?.neighbourhood || geoData.address?.city || geoData.display_name?.split(',')[0] || '';
+          }
+
+          // 2. Fetch Nearby Police Stations
+          const policeRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=police&lat=${lat}&lon=${lng}&limit=3`, {
+            headers: { 'User-Agent': 'TravelShield-AI-App' }
+          });
+          let policeList: string[] = [];
+          if (policeRes.ok) {
+            const policeData = await policeRes.json() as any[];
+            policeList = policeData.slice(0, 3).map((p, idx) => 
+              `${idx + 1}. ${p.name || p.display_name?.split(',')[0]} (coordinates: ${p.lat}, ${p.lon})`
+            );
+          }
+
+          // 3. Fetch Nearby Hospitals
+          const hospitalRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=hospital&lat=${lat}&lon=${lng}&limit=3`, {
+            headers: { 'User-Agent': 'TravelShield-AI-App' }
+          });
+          let hospitalList: string[] = [];
+          if (hospitalRes.ok) {
+            const hospitalData = await hospitalRes.json() as any[];
+            hospitalList = hospitalData.slice(0, 3).map((h, idx) => 
+              `${idx + 1}. ${h.name || h.display_name?.split(',')[0]} (coordinates: ${h.lat}, ${h.lon})`
+            );
+          }
+
+          let context = `User current location coordinates: latitude ${lat.toFixed(5)}, longitude ${lng.toFixed(5)}.\n`;
+          if (areaStr) context += `Neighborhood/Area: ${areaStr}.\n`;
+          if (policeList.length > 0) {
+            context += `Nearby Police Stations:\n${policeList.join('\n')}\n`;
+          } else {
+            context += `Nearby Police: Standard local emergency line (112/999/911).\n`;
+          }
+          if (hospitalList.length > 0) {
+            context += `Nearby Hospitals:\n${hospitalList.join('\n')}\n`;
+          }
+
+          setLocationContext(context);
+          console.log("OSM Geolocation Intelligence context loaded:\n", context);
+        } catch (err) {
+          console.warn('Nominatim loading failed:', err);
+        }
+      },
+      (err) => console.warn('Geolocation permission not granted for AI:', err),
+      { enableHighAccuracy: true, timeout: 8000 }
+    );
+  }, []);
+
   useEffect(() => {
     dashboardApi.chatMessages()
       .then(({ data }) => {
@@ -110,7 +179,7 @@ export default function TravelAiPage() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading]);
 
-  // ── Direct Gemini API \u2014 real AI responses ─────────────────────────────────
+  // ── Direct Gemini API ─ real AI responses ─────────────────────────────────
   const callGeminiDirect = async (userText: string, history: Message[]): Promise<string> => {
     const GEMINI_KEY = localStorage.getItem('travelshield_gemini_api_key') || import.meta.env.VITE_GEMINI_API_KEY || '';
     if (!GEMINI_KEY) throw new Error('No Gemini key in VITE_GEMINI_API_KEY');
@@ -128,6 +197,10 @@ Rules:
 - For safety questions: give a risk level (Low/Moderate/High) and specific tips.
 - For routes: give actual advice about safe areas, times to avoid, transport options.`;
 
+    const userTextWithContext = locationContext 
+      ? `[LOCAL GEOGRAPHIC CONTEXT]\n${locationContext}\n\n[USER MESSAGE]\n${userText}`
+      : userText;
+
     const contents = [
       { role: 'user', parts: [{ text: systemPrompt }] },
       { role: 'model', parts: [{ text: 'Ready. I am TravelShield AI — giving real, location-aware travel safety guidance.' }] },
@@ -135,7 +208,7 @@ Rules:
         role: m.role === 'user' ? 'user' : 'model',
         parts: [{ text: m.content }],
       })),
-      { role: 'user', parts: [{ text: userText }] },
+      { role: 'user', parts: [{ text: userTextWithContext }] },
     ];
 
     const res = await fetch(
@@ -178,8 +251,8 @@ Rules:
         aiContent = await callGeminiDirect(text, messages);
       } catch (geminiErr) {
         console.warn('Direct Gemini failed, falling back to backend:', geminiErr);
-        // 2. Backend fallback (also tries Gemini via GEMINI_API_KEY env var, then smart templates)
-        const { data } = await dashboardApi.sendMessage(text);
+        // 2. Backend fallback (sends text + coordinates context)
+        const { data } = await dashboardApi.sendMessage(text, userCoords?.lat, userCoords?.lng);
         aiContent = data?.data?.assistantMessage?.content
           || data?.data?.content
           || data?.message

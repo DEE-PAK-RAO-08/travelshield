@@ -796,7 +796,7 @@ router.post(
   [body('content').trim().notEmpty()],
   validate,
   asyncHandler(async (req, res) => {
-    const content = req.body.content;
+    const { content, latitude, longitude } = req.body;
     const lower = content.toLowerCase();
     
     const userMessage = await prisma.chatMessage.create({
@@ -805,10 +805,33 @@ router.post(
 
     // 1. Retrieve current facts from database for RAG context
     const [dbPlaces, dbAlerts, dbSafeZones] = await Promise.all([
-      prisma.place.findMany({ where: { isActive: true }, take: 10 }),
+      prisma.place.findMany({ where: { isActive: true }, take: 20 }),
       prisma.alert.findMany({ where: { userId: req.user!.userId, isRead: false }, take: 3 }),
-      prisma.safeZone.findMany({ where: { isActive: true }, take: 3 }),
+      prisma.safeZone.findMany({ where: { isActive: true }, take: 10 }),
     ]);
+
+    // Sort by distance if coordinates are provided
+    let dbPlacesSorted = dbPlaces.slice(0, 5);
+    let dbSafeZonesSorted = dbSafeZones.slice(0, 3);
+    let userLocationLabel = '';
+
+    if (latitude !== undefined && longitude !== undefined) {
+      const uLat = parseFloat(latitude as string);
+      const uLng = parseFloat(longitude as string);
+      if (!isNaN(uLat) && !isNaN(uLng)) {
+        dbPlacesSorted = dbPlaces
+          .map((p: any) => ({ ...p, distanceKm: getDistanceKm(uLat, uLng, p.latitude, p.longitude) }))
+          .sort((a, b) => a.distanceKm - b.distanceKm)
+          .slice(0, 5);
+
+        dbSafeZonesSorted = dbSafeZones
+          .map((z: any) => ({ ...z, distanceKm: getDistanceKm(uLat, uLng, z.latitude, z.longitude) }))
+          .sort((a, b) => a.distanceKm - b.distanceKm)
+          .slice(0, 3);
+
+        userLocationLabel = `\nUser coordinates: lat ${uLat.toFixed(5)}, lng ${uLng.toFixed(5)}.`;
+      }
+    }
 
     // Smart keyword-based intent detection
     const intent = (() => {
@@ -838,10 +861,10 @@ Specialties: travel safety, crime risk, local police contacts, safe routes, crow
 Rules: Keep under 160 words. Use bullet points for lists. Give risk levels (Low/Moderate/High). Warn about crowd levels ("Crowds are high, stay alert") and waterbodies ("Be safe near riverbanks/coasts"). Provide real emergency numbers when known. Be direct and helpful.`;
 
         const contextStr = `
-Database context:
-- Safe Zones: ${JSON.stringify(dbSafeZones.map((z: { name: string; safetyScore: number }) => ({ name: z.name, score: z.safetyScore })))}
+Database context:${userLocationLabel}
+- Safe Zones: ${JSON.stringify(dbSafeZonesSorted.map((z: any) => ({ name: z.name, score: z.safetyScore, dist: z.distanceKm ? `${z.distanceKm.toFixed(2)}km` : '0.5km' })))}
 - Active Alerts: ${JSON.stringify(dbAlerts.map((a: { title: string; message: string; severity: string }) => ({ title: a.title, severity: a.severity })))}
-- Local Places: ${JSON.stringify(dbPlaces.slice(0,5).map((p: { name: string; category: string; safetyScore: number }) => ({ name: p.name, category: p.category, score: p.safetyScore })))}`;
+- Local Places: ${JSON.stringify(dbPlacesSorted.map((p: any) => ({ name: p.name, category: p.category, score: p.safetyScore, dist: p.distanceKm ? `${p.distanceKm.toFixed(2)}km` : '0.5km' })))}`;
 
         const contents = [
           { role: 'user', parts: [{ text: systemPrompt }] },
@@ -880,10 +903,10 @@ Database context:
     if (!geminiSuccess) {
       switch (intent) {
         case 'food': {
-          const foodPlaces = dbPlaces.filter(p => p.category.toLowerCase().match(/food|restaurant|eat|cafe|dine/));
+          const foodPlaces = dbPlacesSorted.filter((p: any) => p.category.toLowerCase().match(/food|restaurant|eat|cafe|dine/));
           if (foodPlaces.length > 0) {
             reply = `🍽️ Here are the safest dining options nearby:\n\n` +
-              foodPlaces.map(p => `• ${p.name} — Safety Score: ${p.safetyScore}% | ${p.distanceKm ?? 0.5}km away`).join('\n') +
+              foodPlaces.map((p: any) => `• ${p.name} — Safety Score: ${p.safetyScore}% | ${p.distanceKm ? `${p.distanceKm.toFixed(2)}km` : '0.5km'} away`).join('\n') +
               `\n\nAll spots are verified safe by TravelShield. Enjoy your meal! 😊`;
           } else {
             reply = `🍽️ I don't have specific dining data for your exact location yet, but here are general tips:\n\n• Stick to busy, well-lit restaurants\n• Check Google Reviews for ratings above 4.0\n• Avoid isolated eateries late at night\n\nStay safe and bon appétit!`;
@@ -891,10 +914,10 @@ Database context:
           break;
         }
         case 'tourist': {
-          const spots = dbPlaces.filter(p => !p.category.toLowerCase().match(/food|restaurant|eat/));
+          const spots = dbPlacesSorted.filter((p: any) => !p.category.toLowerCase().match(/food|restaurant|eat/));
           if (spots.length > 0) {
             reply = `🗺️ Top safe attractions near you:\n\n` +
-              spots.map(p => `• ${p.name} — Safety Score: ${p.safetyScore}% | Category: ${p.category}`).join('\n') +
+              spots.map((p: any) => `• ${p.name} — Safety Score: ${p.safetyScore}% | Category: ${p.category} | ${p.distanceKm ? `${p.distanceKm.toFixed(2)}km` : '0.5km'} away`).join('\n') +
               `\n\nAll locations are geo-verified and rated safe by TravelShield AI.`;
           } else {
             reply = `🗺️ Popular safe tourist spots in Singapore:\n\n• Gardens by the Bay — Safety Score: 98%\n• Marina Bay Sands — Safety Score: 97%\n• Sentosa Island — Safety Score: 95%\n• Clarke Quay — Safety Score: 93%\n\nAll are well-patrolled and traveler-friendly!`;
@@ -902,7 +925,7 @@ Database context:
           break;
         }
         case 'safety': {
-          const zonesStr = dbSafeZones.map(z => `• ${z.name} — Score: ${z.safetyScore}/100`).join('\n');
+          const zonesStr = dbSafeZonesSorted.map((z: any) => `• ${z.name} — Score: ${z.safetyScore}/100 | ${z.distanceKm ? `${z.distanceKm.toFixed(2)}km` : '0.5km'} away`).join('\n');
           reply = `🛡️ Area Safety Report:\n\n` +
             (zonesStr || `• No specific zones recorded — general area safety appears normal.`) +
             `\n\n✅ Current threat level: LOW\n🚔 Nearest police support: ~0.5km\n💡 Tip: Stay in well-lit, populated areas after dark.`;

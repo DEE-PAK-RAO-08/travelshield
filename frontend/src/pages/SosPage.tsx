@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Phone, HeartPulse, MessageCircle, CheckCircle2 } from 'lucide-react';
+import { Phone, HeartPulse, MessageCircle, CheckCircle2, AlertCircle } from 'lucide-react';
 import { BackgroundGlow } from '@/components/ui/BackgroundGlow';
 import { BottomNav } from '@/components/layout/BottomNav';
 import { dashboardApi } from '@/api/client';
@@ -12,28 +12,60 @@ export default function SosPage() {
   const [contacts, setContacts] = useState<Array<Record<string, string>>>([]);
   const intervalRef = useRef<number | null>(null);
 
+  // iOS Shake Permission & Toggle State
+  const [shakeEnabled, setShakeEnabled] = useState(false);
+  const [motionPermissionStatus, setMotionPermissionStatus] = useState<'default' | 'granted' | 'denied' | 'not-supported'>('default');
+
   useEffect(() => {
     dashboardApi.contacts()
       .then(({ data }) => setContacts(data.data || []))
       .catch(err => console.error('Failed to load contacts for SOS:', err));
+
+    // Check device type on load
+    const isIOS = typeof (DeviceMotionEvent as any).requestPermission === 'function';
+    if (!isIOS) {
+      setShakeEnabled(true);
+      setMotionPermissionStatus('granted');
+    } else {
+      setMotionPermissionStatus('default');
+    }
   }, []);
 
+  const requestMotionPermission = async () => {
+    if (typeof (DeviceMotionEvent as any).requestPermission === 'function') {
+      try {
+        const state = await (DeviceMotionEvent as any).requestPermission();
+        if (state === 'granted') {
+          setMotionPermissionStatus('granted');
+          setShakeEnabled(true);
+        } else {
+          setMotionPermissionStatus('denied');
+          setShakeEnabled(false);
+        }
+      } catch (err) {
+        console.error('Error requesting motion permission:', err);
+        setMotionPermissionStatus('denied');
+      }
+    } else {
+      setMotionPermissionStatus('granted');
+      setShakeEnabled(true);
+    }
+  };
+
   const sendToContact = (phone: string) => {
-    // Strip everything except digits and leading +
     const cleanPhone = phone.replace(/[^\d+]/g, '');
-    // Ensure phone has country code (prefix +91 if 10-digit Indian number)
     const intlPhone = cleanPhone.startsWith('+') ? cleanPhone : `+91${cleanPhone}`;
     
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         const lat = pos.coords.latitude;
         const lng = pos.coords.longitude;
-        const alertMsg = `🚨 URGENT SOS! I need help. I have triggered TravelShield SOS.\nLive Location: https://maps.google.com/?q=${lat},${lng}`;
+        const alertMsg = `🚨 EMERGENCY SOS - TravelShield 🛡️\n\nI need immediate assistance! Here is my live coordinate link:\nhttps://maps.google.com/?q=${lat},${lng}\n\nTime sent: ${new Date().toLocaleTimeString()}`;
         const waUrl = `https://wa.me/${intlPhone.replace('+', '')}?text=${encodeURIComponent(alertMsg)}`;
         window.open(waUrl, '_blank');
       },
       () => {
-        const alertMsg = `🚨 URGENT SOS! I need help. I have triggered TravelShield SOS. Location unavailable.`;
+        const alertMsg = `🚨 EMERGENCY SOS - TravelShield 🛡️\n\nI need immediate assistance! I have triggered TravelShield SOS. Location services unavailable.\n\nTime sent: ${new Date().toLocaleTimeString()}`;
         const waUrl = `https://wa.me/${intlPhone.replace('+', '')}?text=${encodeURIComponent(alertMsg)}`;
         window.open(waUrl, '_blank');
       }
@@ -42,13 +74,15 @@ export default function SosPage() {
 
   // --- Shake to SOS ---
   useEffect(() => {
+    if (!shakeEnabled || triggered) return;
+
     let lastX = 0, lastY = 0, lastZ = 0;
     let lastUpdate = 0;
-    const SHAKE_THRESHOLD = 800; // Adjust for sensitivity
+    const SHAKE_THRESHOLD = 800; // sensitivity limit
 
     const handleMotion = (e: DeviceMotionEvent) => {
       const current = e.accelerationIncludingGravity;
-      if (!current || !current.x || !current.y || !current.z) return;
+      if (!current || current.x === null || current.y === null || current.z === null) return;
 
       const now = Date.now();
       if ((now - lastUpdate) > 100) {
@@ -61,7 +95,7 @@ export default function SosPage() {
         
         const speed = Math.abs(x + y + z - lastX - lastY - lastZ) / diffTime * 10000;
         
-        if (speed > SHAKE_THRESHOLD && !triggered) {
+        if (speed > SHAKE_THRESHOLD) {
           triggerSos();
         }
         
@@ -73,13 +107,12 @@ export default function SosPage() {
 
     window.addEventListener('devicemotion', handleMotion);
     return () => window.removeEventListener('devicemotion', handleMotion);
-  }, [triggered]);
+  }, [shakeEnabled, triggered]);
 
   const startHold = (e: React.MouseEvent | React.TouchEvent) => {
     if (e.cancelable) e.preventDefault();
     if (holding || triggered) return;
     
-    // Vibrate when touching
     if ('vibrate' in navigator) navigator.vibrate(50);
     
     setHolding(true);
@@ -114,7 +147,6 @@ export default function SosPage() {
 
   const triggerSos = async () => {
     setTriggered(true);
-    // Heavy vibration pattern for SOS activated
     if ('vibrate' in navigator) navigator.vibrate([500, 200, 500, 200, 500]);
     
     try {
@@ -135,7 +167,6 @@ export default function SosPage() {
       
       const res = await dashboardApi.triggerSos({ latitude, longitude, location, type: 'SOS' });
       
-      // If tracking session was created, join it on websocket
       if (res.data?.event?.id) {
         const socket = getSocket();
         if (socket) socket.emit('join_tracking', res.data.event.id);
@@ -154,7 +185,31 @@ export default function SosPage() {
         {!triggered && (
           <>
             <h1 className="font-grotesk font-bold text-2xl text-white self-start mb-2">Emergency SOS</h1>
-            <p className="text-white/60 text-sm self-start mb-12">Hold button for 3 seconds or Shake Device to activate</p>
+            <p className="text-white/60 text-sm self-start mb-4">Hold button for 3 seconds or Shake Device to activate</p>
+            
+            {/* Shake Settings and iOS Permissions */}
+            {motionPermissionStatus === 'default' && (
+              <button 
+                onClick={requestMotionPermission}
+                className="mb-6 w-full max-w-sm px-4 py-2.5 bg-amber-500/10 border border-amber-500/25 hover:bg-amber-500/20 text-amber-300 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-amber-500/5 animate-pulse"
+              >
+                <AlertCircle size={14} />
+                iOS User: Tap to enable Shake-to-SOS motion sensors
+              </button>
+            )}
+
+            {motionPermissionStatus === 'granted' && (
+              <div className="mb-6 px-4 py-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-full text-emerald-400 text-[10px] font-extrabold tracking-wider uppercase flex items-center gap-1.5 shadow-md shadow-emerald-500/5 animate-fadeSlideUp">
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                Shake-to-SOS Detection Active
+              </div>
+            )}
+
+            {motionPermissionStatus === 'denied' && (
+              <div className="mb-6 px-4 py-2 bg-red-500/10 border border-red-500/25 rounded-xl text-red-400 text-xs font-semibold text-center leading-normal max-w-sm animate-fadeSlideUp">
+                Shake-to-SOS disabled. Use the Hold SOS button below.
+              </div>
+            )}
           </>
         )}
 
