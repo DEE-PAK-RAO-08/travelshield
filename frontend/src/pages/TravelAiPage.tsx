@@ -85,10 +85,10 @@ function MessageBubble({ msg, index }: { msg: Message; index: number }) {
 // ── Try Gemini API with multiple models/endpoints ────────────────────────────
 async function callGemini(key: string, contents: object[], maxTokens = 400): Promise<string> {
   const models = [
-    'gemini-1.5-flash',
+    'gemini-2.5-flash',
+    'gemini-flash-latest',
     'gemini-2.0-flash',
-    'gemini-pro',
-    'gemini-1.0-pro',
+    'gemini-1.5-flash',
   ];
 
   let lastError = '';
