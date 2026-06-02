@@ -204,25 +204,31 @@ export default function TravelAiPage() {
             areaStr = geoData.address?.suburb || geoData.address?.neighbourhood || geoData.address?.city || geoData.display_name?.split(',')[0] || '';
           }
 
-          const [policeRes, hospitalRes] = await Promise.allSettled([
-            fetch(`https://nominatim.openstreetmap.org/search?format=json&q=police+station&lat=${lat}&lon=${lng}&limit=3`, { headers: { 'User-Agent': 'TravelShield-AI-App' } }),
-            fetch(`https://nominatim.openstreetmap.org/search?format=json&q=hospital&lat=${lat}&lon=${lng}&limit=3`, { headers: { 'User-Agent': 'TravelShield-AI-App' } }),
-          ]);
-
+          const overpassQuery = `[out:json][timeout:10];(node["amenity"="police"](around:5000,${lat},${lng});node["amenity"="hospital"](around:5000,${lat},${lng}););out center;`;
           let policeList: string[] = [];
-          if (policeRes.status === 'fulfilled' && policeRes.value.ok) {
-            const data = await policeRes.value.json() as any[];
-            policeList = data.slice(0, 3).map((p, i) =>
-              `${i + 1}. ${p.name || p.display_name?.split(',')[0] || 'Police Station'} (lat: ${p.lat}, lng: ${p.lon})`
-            );
-          }
-
           let hospitalList: string[] = [];
-          if (hospitalRes.status === 'fulfilled' && hospitalRes.value.ok) {
-            const data = await hospitalRes.value.json() as any[];
-            hospitalList = data.slice(0, 3).map((h, i) =>
-              `${i + 1}. ${h.name || h.display_name?.split(',')[0] || 'Hospital'} (lat: ${h.lat}, lng: ${h.lon})`
-            );
+          
+          try {
+            const opRes = await fetch('https://overpass-api.de/api/interpreter', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+              body: 'data=' + encodeURIComponent(overpassQuery),
+            });
+            if (opRes.ok) {
+              const opData = await opRes.json() as any;
+              const elements = opData.elements || [];
+              const polices = elements.filter((e: any) => e.tags?.amenity === 'police').slice(0, 3);
+              const hospitals = elements.filter((e: any) => e.tags?.amenity === 'hospital').slice(0, 3);
+              
+              policeList = polices.map((p: any, i: number) => 
+                `${i + 1}. ${p.tags?.name || 'Police Station'} (lat: ${p.lat}, lng: ${p.lon})`
+              );
+              hospitalList = hospitals.map((h: any, i: number) => 
+                `${i + 1}. ${h.tags?.name || 'Hospital'} (lat: ${h.lat}, lng: ${h.lon})`
+              );
+            }
+          } catch (e) {
+            console.error("Overpass API failed", e);
           }
 
           let ctx = `User GPS: lat ${lat.toFixed(5)}, lng ${lng.toFixed(5)}.\n`;
