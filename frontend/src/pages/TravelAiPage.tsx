@@ -349,7 +349,8 @@ Rules:
     // Continue to also get safety overview for the destination if needed
   }
 
-  // Normal processing continues belowPersonality: helpful, concise, friendly, factual. Give REAL actionable advice. Never use generic templates.
+  // Normal processing continues below
+  const systemPrompt = `Personality: helpful, concise, friendly, factual. Give REAL actionable advice. Never use generic templates.
 Specialties: travel safety, crime risk, police contacts, safe routes, crowd density, restaurant safety, tourist spots, weather, local emergency numbers.
 Rules:
 - Give specific, useful answers. Use the provided real location data when available.
