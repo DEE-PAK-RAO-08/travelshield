@@ -264,22 +264,17 @@ export default function TravelAiPage() {
   useEffect(() => {
     if (locationContext && !overviewSent) {
       // Auto‑send a safety overview request based on the fetched location data
-      const autoPrompt = 'Provide a detailed safety overview for my current location using the supplied context. List ALL nearby police stations and hospitals with their approximate distances. Include safety score, risk factors, crowd density, emergency numbers, and practical safety tips.';
+      const autoPrompt = 'Give a brief welcome for my current location. Just mention the area name, current safety score, and 2-3 quick tips. Keep it under 80 words.';
       (async () => {
         setLoading(true);
         try {
-          const systemPrompt = `You are SafeRoute AI — an expert travel safety assistant.
-Personality: helpful, concise, factual. Give REAL actionable advice. Never use generic templates.
-Specialties: travel safety, crime risk, police contacts, safe routes, crowd density, restaurant safety, tourist spots, weather, local emergency numbers.
+          const systemPrompt = `You are TravelShield AI — a friendly travel safety assistant.
 Rules:
-- Provide a **Recommended Route** (if a destination is mentioned, generate a simple placeholder route).
-- Include a **Safety Score** (0‑100) calculated from nearby police, hospitals, time of day, and crowd density.
-- Explain **Why** the route is recommended and list **Risk Factors**.
-- List ALL **Nearby Police Stations** and **Hospitals** from the data provided, with approximate distances. Do NOT skip any.
-- Suggest an **Alternative Safer Route** if applicable.
-- Provide **Emergency Recommendations** (nearest helplines, immediate actions).
-- Give detailed, thorough responses. Do NOT cut short. Include all relevant information.
-- If no destination is provided, skip route sections but still give a comprehensive safety overview.
+- Give a SHORT, friendly welcome message for the user's current location.
+- Mention the neighborhood name and safety score ONCE.
+- Give 2-3 quick practical tips (e.g. "keep valuables close", "well-lit main roads are safest").
+- Keep it under 80 words. No lengthy analysis. No score breakdowns. No headers or sections.
+- End with: "Ask me anything about nearby police, hospitals, routes, or safety!"
 `;
           const contents = [
             { role: 'user', parts: [{ text: systemPrompt }] },
@@ -290,14 +285,11 @@ Rules:
             })),
             { role: 'user', parts: [{ text: `${locationContext}\n\n[QUESTION]\n${autoPrompt}` }] },
           ];
-          const aiContent = await callGemini(GEMINI_KEY, contents, 2000);
+          const aiContent = await callGemini(GEMINI_KEY, contents, 400);
           setMessages((prev) => [...prev, { role: 'assistant', content: aiContent, timestamp: new Date() }]);
           const score = parseInt(localStorage.getItem('dynamicSafetyScore') || '70');
           setSafetyScore(score);
           setOverviewSent(true);
-          // Optionally prepend a score message
-          const scoreMsg = `Safety Score: ${score}/100`;
-          setMessages((prev) => [...prev, { role: 'assistant', content: scoreMsg, timestamp: new Date() }]);
         } catch (err) {
           console.error('Auto overview error:', err);
         } finally {
@@ -360,14 +352,12 @@ Rules:
   const systemPrompt = `Personality: helpful, detailed, friendly, factual. Give REAL actionable advice. Never use generic templates.
 Specialties: travel safety, crime risk, police contacts, safe routes, crowd density, restaurant safety, tourist spots, weather, local emergency numbers.
 Rules:
-- The current verified local Safety Score is ${currentDynamicScore}/100. ALWAYS use this EXACT score if you mention a safety score in your response. Do not invent a different score.
-- Give specific, detailed, and thorough answers. Use the provided real location data when available.
+- PRIORITY: Answer the user's ACTUAL question FIRST. If they ask about police stations, list police stations. If they ask about restaurants, list restaurants. Do NOT lead with safety scores or risk analysis unless they specifically ask for it.
+- The current verified local Safety Score is ${currentDynamicScore}/100. Only mention this score if the user asks about safety or risk level.
 - When asked about nearby places (police, hospitals, restaurants, etc.), list ALL available data — at least 5-6 results with names, approximate distances, and useful details like phone numbers or operating hours if known.
-- Warn about crowded areas ("Crowds can be high — keep belongings close").
-- Warn about water/cliffs/rivers with safety tips.
-- Give rich, comprehensive responses. Do NOT keep responses short. Include all relevant details, tips, and context. Use bullet points and emojis for readability.
-- For police/emergency: ALWAYS give real local emergency numbers (India: 100 police, 108 ambulance, 101 fire; use what you know for the country).
-- For safety questions: give a risk level (🟢 Low / 🟡 Moderate / 🔴 High) and specific tips.`;
+- Give rich, comprehensive responses with bullet points and emojis for readability.
+- For police/emergency: ALWAYS include real local emergency numbers (India: 100 police, 108 ambulance, 101 fire).
+- Only add a brief safety tip at the END if relevant, not at the beginning.`;
 
       const userTextWithContext = locationContext
         ? `[MY REAL LOCATION DATA — use this to answer location questions]\n${locationContext}\n\n[MY QUESTION]\n${text}`
