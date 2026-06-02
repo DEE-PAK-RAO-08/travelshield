@@ -260,44 +260,28 @@ export default function TravelAiPage() {
     return route;
   };
 
-  // ── Automatic safety overview after location is obtained ────────────────────────
+  // ── Automatic welcome message after location is obtained ────────────────────────
   useEffect(() => {
     if (locationContext && !overviewSent) {
-      // Auto‑send a safety overview request based on the fetched location data
-      const autoPrompt = 'Give a brief welcome for my current location. Just mention the area name, current safety score, and 2-3 quick tips. Keep it under 80 words.';
-      (async () => {
-        setLoading(true);
-        try {
-          const systemPrompt = `You are TravelShield AI — a friendly travel safety assistant.
-Rules:
-- Give a SHORT, friendly welcome message for the user's current location.
-- Mention the neighborhood name and safety score ONCE.
-- Give 2-3 quick practical tips (e.g. "keep valuables close", "well-lit main roads are safest").
-- Keep it under 80 words. No lengthy analysis. No score breakdowns. No headers or sections.
-- End with: "Ask me anything about nearby police, hospitals, routes, or safety!"
-`;
-          const contents = [
-            { role: 'user', parts: [{ text: systemPrompt }] },
-            { role: 'model', parts: [{ text: 'Ready.' }] },
-            ...messages.slice(-8).map((m) => ({
-              role: m.role === 'user' ? 'user' : 'model',
-              parts: [{ text: m.content }],
-            })),
-            { role: 'user', parts: [{ text: `${locationContext}\n\n[QUESTION]\n${autoPrompt}` }] },
-          ];
-          const aiContent = await callGemini(GEMINI_KEY, contents, 400);
-          setMessages((prev) => [...prev, { role: 'assistant', content: aiContent, timestamp: new Date() }]);
-          const score = parseInt(localStorage.getItem('dynamicSafetyScore') || '70');
-          setSafetyScore(score);
-          setOverviewSent(true);
-        } catch (err) {
-          console.error('Auto overview error:', err);
-        } finally {
-          setLoading(false);
-        }
-      })();
+      const score = parseInt(localStorage.getItem('dynamicSafetyScore') || '70');
+      setSafetyScore(score);
+      const area = locationLabel || 'your area';
+      const hour = new Date().getHours();
+      const timeOfDay = hour >= 5 && hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : hour < 21 ? 'evening' : 'night';
+      
+      let tips = '';
+      if (hour >= 20 || hour < 6) {
+        tips = '🌙 It\'s nighttime — stick to well-lit main roads and avoid isolated lanes. Keep your phone charged and valuables secure.';
+      } else {
+        tips = '☀️ Stay aware of your surroundings in crowded areas. Keep valuables close and use main roads when possible.';
+      }
+
+      const welcomeMsg = `👋 Welcome to **${area}**! Your current Safety Score is **${score}/100**.\n\n${tips}\n\n📞 **Emergency:** Police 100 | Ambulance 108 | Fire 101\n\nAsk me anything about nearby police stations, hospitals, safe routes, or restaurants! 🗺️`;
+      
+      setMessages((prev) => [...prev, { role: 'assistant', content: welcomeMsg, timestamp: new Date() }]);
+      setOverviewSent(true);
     }
-  }, [locationContext, overviewSent, messages, GEMINI_KEY]);
+  }, [locationContext, overviewSent, locationLabel]);
 
 
   const send = async (text: string) => {
