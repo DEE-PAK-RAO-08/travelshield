@@ -152,22 +152,42 @@ async function callGemini(key: string, contents: object[], maxTokens = 800): Pro
 export default function TravelAiPage() {
   const navigate = useNavigate();
   const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-
-  // Gemini key (from env or localStorage settings override)
+  const [safetyScore, setSafetyScore] = useState<number | null>(null);
+  const [routeInfo, setRouteInfo] = useState<string>('');
+  const [emergencyInfo, setEmergencyInfo] = useState<string>('');
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [overviewSent, setOverviewSent] = useState(false);
+  const [error, setError] = useState('');
+  // Helper: Simple safety score heuristic based on available context
+  const computeSafetyScore = (context: string): number => {
+    let score = 100;
+    // Penalize if fewer than 3 police stations or hospitals are listed
+    const policeCount = (context.match(/Real nearby police stations:/g) || []).length;
+    const hospitalCount = (context.match(/Real nearby hospitals:/g) || []).length;
+    if (policeCount < 3) score -= (3 - policeCount) * 10;
+    if (hospitalCount < 3) score -= (3 - hospitalCount) * 10;
+    // Night time penalty (after 20:00 or before 06:00)
+    const hour = new Date().getHours();
+    if (hour >= 20 || hour < 6) score -= 15;
+    // Ensure bounds
+    return Math.max(0, Math.min(100, score));
+  };
   const GEMINI_KEY = localStorage.getItem('travelshield_gemini_api_key') || import.meta.env.VITE_GEMINI_API_KEY || '';
   const hasKey = !!GEMINI_KEY;
 
   // Location context from OSM
   const [locationContext, setLocationContext] = useState<string>('');
   const [locationLabel, setLocationLabel] = useState<string>('');
+  const [locationLoading, setLocationLoading] = useState<boolean>(true);
 
   useEffect(() => {
-    if (!('geolocation' in navigator)) return;
+    if (!('geolocation' in navigator)) {
+      setLocationLoading(false);
+      return;
+    }
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
         const lat = pos.coords.latitude;
@@ -214,16 +234,73 @@ export default function TravelAiPage() {
           setLocationLabel(areaStr || `${lat.toFixed(4)}, ${lng.toFixed(4)}`);
         } catch {
           // location context not critical
+        } finally {
+          setLocationLoading(false);
         }
       },
-      () => {},
+      () => {
+        setLocationLoading(false);
+      },
       { enableHighAccuracy: true, timeout: 8000 }
     );
   }, []);
 
+  // Placeholder route fetch – in a real app replace with a proper routing API
+  const fetchRoutePlaceholder = async (destination: string): Promise<string> => {
+    // Simple mocked route: current location → destination
+    const route = `Route from your current location to ${destination}:\n1. Head north for 2 km.\n2. Turn right onto Main St.\n3. Arrive at ${destination}.`;
+    setRouteInfo(route);
+    return route;
+  };
+
+  // ── Automatic safety overview after location is obtained ────────────────────────
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, loading]);
+    if (locationContext && !overviewSent) {
+      // Auto‑send a safety overview request based on the fetched location data
+      const autoPrompt = 'Provide a concise safety overview for my current location using the supplied context. Include safety score, nearby police stations, hospitals, and any immediate risk factors.';
+      (async () => {
+        setLoading(true);
+        try {
+          const systemPrompt = `You are SafeRoute AI — an expert travel safety assistant.
+Personality: helpful, concise, factual. Give REAL actionable advice. Never use generic templates.
+Specialties: travel safety, crime risk, police contacts, safe routes, crowd density, restaurant safety, tourist spots, weather, local emergency numbers.
+Rules:
+- Provide a **Recommended Route** (if a destination is mentioned, generate a simple placeholder route).
+- Include a **Safety Score** (0‑100) calculated from nearby police, hospitals, time of day, and crowd density.
+- Explain **Why** the route is recommended and list **Risk Factors**.
+- List **Nearby Police Stations** and **Hospitals** (max 3 each).
+- Suggest an **Alternative Safer Route** if applicable.
+- Provide **Emergency Recommendations** (nearest helplines, immediate actions).
+- Keep the response under 250 words. Use bullet points where appropriate.
+- If no destination is provided, skip route sections but still give a concise safety overview.
+`;
+          const contents = [
+            { role: 'user', parts: [{ text: systemPrompt }] },
+            { role: 'model', parts: [{ text: 'Ready.' }] },
+            ...messages.slice(-8).map((m) => ({
+              role: m.role === 'user' ? 'user' : 'model',
+              parts: [{ text: m.content }],
+            })),
+            { role: 'user', parts: [{ text: `${locationContext}\n\n[QUESTION]\n${autoPrompt}` }] },
+          ];
+          const aiContent = await callGemini(GEMINI_KEY, contents, 800);
+          setMessages((prev) => [...prev, { role: 'assistant', content: aiContent, timestamp: new Date() }]);
+          // Compute safety score from context and store
+          const score = computeSafetyScore(locationContext);
+          setSafetyScore(score);
+          setOverviewSent(true);
+          // Optionally prepend a score message
+          const scoreMsg = `Safety Score: ${score}/100`;
+          setMessages((prev) => [...prev, { role: 'assistant', content: scoreMsg, timestamp: new Date() }]);
+        } catch (err) {
+          console.error('Auto overview error:', err);
+        } finally {
+          setLoading(false);
+        }
+      })();
+    }
+  }, [locationContext, overviewSent, messages, GEMINI_KEY]);
+
 
   const send = async (text: string) => {
     if (!text.trim() || loading) return;
@@ -239,8 +316,40 @@ export default function TravelAiPage() {
     setMessages(prev => [...prev, userMsg]);
 
     try {
-      const systemPrompt = `You are TravelShield AI — an expert travel safety assistant.
-Personality: helpful, concise, friendly, factual. Give REAL actionable advice. Never use generic templates.
+  // Detect emergency intent in user query
+  const emergencyKeywords = /\b(emergency|help|sos|danger|unsafe|critical)\b/i;
+  const isEmergency = emergencyKeywords.test(text);
+
+  if (isEmergency) {
+    // Build a concise emergency response using available context
+    const emergencyPrompt = `You are SafeRoute AI. Respond ONLY with the following fields (no extra text):\n\n**Nearest Police Stations** (list up to 3)\n**Nearest Hospitals** (list up to 3)\n**Emergency Helplines** (include generic numbers if country unknown)\n**Immediate Action Steps** (what the user should do now). Use the supplied location context.\n\nLocation Context:\n${locationContext}`;
+    try {
+      const contents = [
+        { role: 'user', parts: [{ text: emergencyPrompt }] },
+      ];
+      const aiContent = await callGemini(GEMINI_KEY, contents, 800);
+      setEmergencyInfo(aiContent);
+      setMessages((prev) => [...prev, { role: 'assistant', content: aiContent, timestamp: new Date() }]);
+    } catch (err) {
+      console.error('Emergency response error:', err);
+      setError('Failed to generate emergency assistance.');
+    }
+    setLoading(false);
+    return; // skip normal processing
+  }
+
+  // Detect simple route request ("to <destination>")
+  const routeMatch = text.match(/\bto\s+(.+)/i);
+  if (routeMatch) {
+    const destination = routeMatch[1].trim();
+    const route = await fetchRoutePlaceholder(destination);
+    // Append route info as a message using the returned route string
+    const routeMsg = `Suggested Route:\n${route}`;
+    setMessages((prev) => [...prev, { role: 'assistant', content: routeMsg, timestamp: new Date() }]);
+    // Continue to also get safety overview for the destination if needed
+  }
+
+  // Normal processing continues belowPersonality: helpful, concise, friendly, factual. Give REAL actionable advice. Never use generic templates.
 Specialties: travel safety, crime risk, police contacts, safe routes, crowd density, restaurant safety, tourist spots, weather, local emergency numbers.
 Rules:
 - Give specific, useful answers. Use the provided real location data when available.
@@ -389,13 +498,23 @@ Rules:
               <span className="shimmer-text" style={{ fontWeight: 700, fontSize: 15 }}>TravelShield AI</span>
               <Sparkles size={12} color="#a78bfa" />
             </div>
-            {locationLabel ? (
+            {locationLoading ? (
+              <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: 10, marginTop: 1, display: 'flex', alignItems: 'center', gap: 3 }}>
+                Locating you...
+              </p>
+            ) : locationLabel ? (
               <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: 10, marginTop: 1, display: 'flex', alignItems: 'center', gap: 3 }}>
                 <MapPin size={8} /> {locationLabel}
               </p>
             ) : (
               <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: 10, marginTop: 1 }}>
                 Powered by Gemini AI
+              </p>
+            )}
+            {/* Safety Score display */}
+            {safetyScore !== null && (
+              <p style={{ color: '#34d399', fontSize: 11, marginTop: 2 }}>
+                Safety Score: {safetyScore}/100
               </p>
             )}
           </div>
