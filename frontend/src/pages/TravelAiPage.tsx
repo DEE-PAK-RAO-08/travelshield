@@ -217,8 +217,8 @@ export default function TravelAiPage() {
             if (opRes.ok) {
               const opData = await opRes.json() as any;
               const elements = opData.elements || [];
-              const polices = elements.filter((e: any) => e.tags?.amenity === 'police').slice(0, 3);
-              const hospitals = elements.filter((e: any) => e.tags?.amenity === 'hospital').slice(0, 3);
+              const polices = elements.filter((e: any) => e.tags?.amenity === 'police').slice(0, 6);
+              const hospitals = elements.filter((e: any) => e.tags?.amenity === 'hospital').slice(0, 6);
               
               policeList = polices.map((p: any, i: number) => 
                 `${i + 1}. ${p.tags?.name || 'Police Station'} (lat: ${p.lat}, lng: ${p.lon})`
@@ -264,7 +264,7 @@ export default function TravelAiPage() {
   useEffect(() => {
     if (locationContext && !overviewSent) {
       // Auto‑send a safety overview request based on the fetched location data
-      const autoPrompt = 'Provide a concise safety overview for my current location using the supplied context. Include safety score, nearby police stations, hospitals, and any immediate risk factors.';
+      const autoPrompt = 'Provide a detailed safety overview for my current location using the supplied context. List ALL nearby police stations and hospitals with their approximate distances. Include safety score, risk factors, crowd density, emergency numbers, and practical safety tips.';
       (async () => {
         setLoading(true);
         try {
@@ -275,11 +275,11 @@ Rules:
 - Provide a **Recommended Route** (if a destination is mentioned, generate a simple placeholder route).
 - Include a **Safety Score** (0‑100) calculated from nearby police, hospitals, time of day, and crowd density.
 - Explain **Why** the route is recommended and list **Risk Factors**.
-- List **Nearby Police Stations** and **Hospitals** (max 3 each).
+- List ALL **Nearby Police Stations** and **Hospitals** from the data provided, with approximate distances. Do NOT skip any.
 - Suggest an **Alternative Safer Route** if applicable.
 - Provide **Emergency Recommendations** (nearest helplines, immediate actions).
-- Keep the response under 250 words. Use bullet points where appropriate.
-- If no destination is provided, skip route sections but still give a concise safety overview.
+- Give detailed, thorough responses. Do NOT cut short. Include all relevant information.
+- If no destination is provided, skip route sections but still give a comprehensive safety overview.
 `;
           const contents = [
             { role: 'user', parts: [{ text: systemPrompt }] },
@@ -290,7 +290,7 @@ Rules:
             })),
             { role: 'user', parts: [{ text: `${locationContext}\n\n[QUESTION]\n${autoPrompt}` }] },
           ];
-          const aiContent = await callGemini(GEMINI_KEY, contents, 800);
+          const aiContent = await callGemini(GEMINI_KEY, contents, 2000);
           setMessages((prev) => [...prev, { role: 'assistant', content: aiContent, timestamp: new Date() }]);
           const score = parseInt(localStorage.getItem('dynamicSafetyScore') || '70');
           setSafetyScore(score);
@@ -333,7 +333,7 @@ Rules:
       const contents = [
         { role: 'user', parts: [{ text: emergencyPrompt }] },
       ];
-      const aiContent = await callGemini(GEMINI_KEY, contents, 800);
+      const aiContent = await callGemini(GEMINI_KEY, contents, 2000);
       setEmergencyInfo(aiContent);
       setMessages((prev) => [...prev, { role: 'assistant', content: aiContent, timestamp: new Date() }]);
     } catch (err) {
@@ -357,14 +357,15 @@ Rules:
 
   // Normal processing continues below
   const currentDynamicScore = localStorage.getItem('dynamicSafetyScore') || '70';
-  const systemPrompt = `Personality: helpful, concise, friendly, factual. Give REAL actionable advice. Never use generic templates.
+  const systemPrompt = `Personality: helpful, detailed, friendly, factual. Give REAL actionable advice. Never use generic templates.
 Specialties: travel safety, crime risk, police contacts, safe routes, crowd density, restaurant safety, tourist spots, weather, local emergency numbers.
 Rules:
 - The current verified local Safety Score is ${currentDynamicScore}/100. ALWAYS use this EXACT score if you mention a safety score in your response. Do not invent a different score.
-- Give specific, useful answers. Use the provided real location data when available.
+- Give specific, detailed, and thorough answers. Use the provided real location data when available.
+- When asked about nearby places (police, hospitals, restaurants, etc.), list ALL available data — at least 5-6 results with names, approximate distances, and useful details like phone numbers or operating hours if known.
 - Warn about crowded areas ("Crowds can be high — keep belongings close").
 - Warn about water/cliffs/rivers with safety tips.
-- Keep responses under 200 words. Use bullet points for 3+ items. Use relevant emojis.
+- Give rich, comprehensive responses. Do NOT keep responses short. Include all relevant details, tips, and context. Use bullet points and emojis for readability.
 - For police/emergency: ALWAYS give real local emergency numbers (India: 100 police, 108 ambulance, 101 fire; use what you know for the country).
 - For safety questions: give a risk level (🟢 Low / 🟡 Moderate / 🔴 High) and specific tips.`;
 
@@ -382,7 +383,7 @@ Rules:
         { role: 'user', parts: [{ text: userTextWithContext }] },
       ];
 
-      const aiContent = await callGemini(GEMINI_KEY, contents, 800);
+      const aiContent = await callGemini(GEMINI_KEY, contents, 2000);
       setMessages(prev => [...prev, { role: 'assistant', content: aiContent, timestamp: new Date() }]);
     } catch (err) {
       const errMsg = String(err);
