@@ -154,10 +154,10 @@ export default function MapPage() {
     
     let enriched = [...baseList];
     
-    // Ensure each category has at least 115 points
+    // Ensure each category has at least 15 points
     for (const cat of categories) {
       const existing = enriched.filter(p => p.category === cat);
-      const needed = 115 - existing.length;
+      const needed = 15 - existing.length;
       
       if (needed > 0) {
         for (let i = 0; i < needed; i++) {
