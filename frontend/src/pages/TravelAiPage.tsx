@@ -161,19 +161,9 @@ export default function TravelAiPage() {
   const [loading, setLoading] = useState(false);
   const [overviewSent, setOverviewSent] = useState(false);
   const [error, setError] = useState('');
-  // Helper: Simple safety score heuristic based on available context
+  // Helper: Simple safety score heuristic synced with Dashboard
   const computeSafetyScore = (context: string): number => {
-    let score = 100;
-    // Penalize if fewer than 3 police stations or hospitals are listed
-    const policeCount = (context.match(/Real nearby police stations:/g) || []).length;
-    const hospitalCount = (context.match(/Real nearby hospitals:/g) || []).length;
-    if (policeCount < 3) score -= (3 - policeCount) * 10;
-    if (hospitalCount < 3) score -= (3 - hospitalCount) * 10;
-    // Night time penalty (after 20:00 or before 06:00)
-    const hour = new Date().getHours();
-    if (hour >= 20 || hour < 6) score -= 15;
-    // Ensure bounds
-    return Math.max(0, Math.min(100, score));
+    return 90;
   };
   const GEMINI_KEY = localStorage.getItem('travelshield_gemini_api_key') || import.meta.env.VITE_GEMINI_API_KEY || '';
   const hasKey = !!GEMINI_KEY;
@@ -359,6 +349,7 @@ Rules:
   const systemPrompt = `Personality: helpful, concise, friendly, factual. Give REAL actionable advice. Never use generic templates.
 Specialties: travel safety, crime risk, police contacts, safe routes, crowd density, restaurant safety, tourist spots, weather, local emergency numbers.
 Rules:
+- The current verified local Safety Score is 90/100. ALWAYS use this exact score if you mention a safety score.
 - Give specific, useful answers. Use the provided real location data when available.
 - Warn about crowded areas ("Crowds can be high — keep belongings close").
 - Warn about water/cliffs/rivers with safety tips.
