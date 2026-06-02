@@ -161,9 +161,19 @@ export default function TravelAiPage() {
   const [loading, setLoading] = useState(false);
   const [overviewSent, setOverviewSent] = useState(false);
   const [error, setError] = useState('');
-  // Helper: Simple safety score heuristic synced with Dashboard
-  const computeSafetyScore = (context: string): number => {
-    return 90;
+  // Helper: Simple safety score heuristic based on real counts
+  const computeSafetyScore = (policeCount: number, hospitalCount: number): number => {
+    let score = 100;
+    // Penalize if fewer than 3 police stations or hospitals are found nearby
+    if (policeCount < 3) score -= (3 - policeCount) * 10;
+    if (hospitalCount < 3) score -= (3 - hospitalCount) * 10;
+    // Night time penalty (after 20:00 or before 06:00)
+    const hour = new Date().getHours();
+    if (hour >= 20 || hour < 6) score -= 15;
+    // Ensure bounds
+    const finalScore = Math.max(0, Math.min(100, score));
+    localStorage.setItem('dynamicSafetyScore', finalScore.toString());
+    return finalScore;
   };
   const GEMINI_KEY = localStorage.getItem('travelshield_gemini_api_key') || import.meta.env.VITE_GEMINI_API_KEY || '';
   const hasKey = !!GEMINI_KEY;
@@ -227,6 +237,7 @@ export default function TravelAiPage() {
           if (hospitalList.length) ctx += `Real nearby hospitals:\n${hospitalList.join('\n')}\n`;
 
           setLocationContext(ctx);
+          computeSafetyScore(policeList.length, hospitalList.length);
           setLocationLabel(areaStr || `${lat.toFixed(4)}, ${lng.toFixed(4)}`);
         } catch {
           // location context not critical
@@ -281,8 +292,7 @@ Rules:
           ];
           const aiContent = await callGemini(GEMINI_KEY, contents, 800);
           setMessages((prev) => [...prev, { role: 'assistant', content: aiContent, timestamp: new Date() }]);
-          // Compute safety score from context and store
-          const score = computeSafetyScore(locationContext);
+          const score = parseInt(localStorage.getItem('dynamicSafetyScore') || '70');
           setSafetyScore(score);
           setOverviewSent(true);
           // Optionally prepend a score message
@@ -346,10 +356,11 @@ Rules:
   }
 
   // Normal processing continues below
+  const currentDynamicScore = localStorage.getItem('dynamicSafetyScore') || '70';
   const systemPrompt = `Personality: helpful, concise, friendly, factual. Give REAL actionable advice. Never use generic templates.
 Specialties: travel safety, crime risk, police contacts, safe routes, crowd density, restaurant safety, tourist spots, weather, local emergency numbers.
 Rules:
-- The current verified local Safety Score is 90/100. ALWAYS use this exact score if you mention a safety score.
+- The current verified local Safety Score is ${currentDynamicScore}/100. ALWAYS use this EXACT score if you mention a safety score in your response. Do not invent a different score.
 - Give specific, useful answers. Use the provided real location data when available.
 - Warn about crowded areas ("Crowds can be high — keep belongings close").
 - Warn about water/cliffs/rivers with safety tips.

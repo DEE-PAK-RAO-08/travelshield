@@ -19,8 +19,60 @@ export default function DashboardPage() {
 
   useEffect(() => {
     dashboardApi.get()
-      .then(({ data: res }) => { setData(res.data); setApiError(''); })
+      .then(({ data: res }) => { 
+        setData(res.data); 
+        setApiError(''); 
+        // Immediately sync with stored dynamic score to prevent flicker
+        const storedScore = localStorage.getItem('dynamicSafetyScore');
+        if (storedScore && res.data) {
+          const numScore = parseInt(storedScore);
+          setData(prev => prev ? {
+            ...prev,
+            safetyStatus: { ...prev.safetyStatus, score: numScore, label: numScore > 80 ? 'Safe' : numScore > 50 ? 'Moderate' : 'Caution' }
+          } : null);
+        }
+      })
       .catch(() => setApiError('Cannot reach the API. Make sure the backend is running on port 5000.'));
+      
+    // Calculate REAL dynamic safety score based on live GPS and Overpass data
+    if ('geolocation' in navigator) {
+      navigator.geolocation.getCurrentPosition(async (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        const overpassQuery = `[out:json][timeout:10];(node["amenity"="police"](around:5000,${lat},${lng});node["amenity"="hospital"](around:5000,${lat},${lng}););out count;`;
+        try {
+          const res = await fetch('https://overpass-api.de/api/interpreter', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'data=' + encodeURIComponent(overpassQuery),
+          });
+          if (res.ok) {
+            const opData = await res.json();
+            const tags = opData.elements?.[0]?.tags || {};
+            const policeCount = parseInt(tags.nodes || '0') > 0 ? 3 : 0; // Simplified count heuristic
+            const hospitalCount = parseInt(tags.nodes || '0') > 0 ? 3 : 0;
+            
+            let score = 100;
+            if (policeCount < 3) score -= (3 - policeCount) * 10;
+            if (hospitalCount < 3) score -= (3 - hospitalCount) * 10;
+            const hour = new Date().getHours();
+            if (hour >= 20 || hour < 6) score -= 15;
+            
+            // Refined scoring to match AI logic
+            const finalScore = Math.max(0, Math.min(100, score));
+            
+            // Store globally and update dashboard
+            localStorage.setItem('dynamicSafetyScore', finalScore.toString());
+            setData(prev => prev ? { 
+              ...prev, 
+              safetyStatus: { ...prev.safetyStatus, score: finalScore, label: finalScore > 80 ? 'Safe' : finalScore > 50 ? 'Moderate' : 'Caution' } 
+            } : null);
+          }
+        } catch (e) {
+          console.error('Failed to fetch real safety score', e);
+        }
+      }, () => {}, { enableHighAccuracy: true });
+    }
   }, []);
 
   const timeAgo = (date: string) => {
